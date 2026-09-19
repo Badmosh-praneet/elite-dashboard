@@ -16,34 +16,23 @@ export default function Leaderboard({ board = [] }) {
   const totalRetails = sorted.reduce((sum, c) => sum + Number(c.retail_achieved ?? c.retails ?? 0), 0);
   const totalAch = totalTarget > 0 ? (totalBookings / totalTarget) * 100 : null;
 
-  // Rank as a written numeral rather than a medal. Gold/silver/bronze is a
-  // metaphor borrowed from games, and it forced three colours that belong to no
-  // palette here; 一 二 三 says the same thing in the page's own voice, with
-  // only the leader inked in vermilion.
-  const KANJI = ['一', '二', '三'];
-  const getRankBadge = (idx) => {
-    if (idx < 3) {
-      return (
-        <span
-          title={`Rank ${idx + 1}`}
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '17px',
-            lineHeight: 1,
-            color: idx === 0 ? 'var(--shu-ink)' : 'var(--ink-2)',
-          }}
-        >
-          {KANJI[idx]}
-        </span>
-      );
-    }
-    return (
-      <span style={{
-        fontFamily: 'var(--font-display)', fontSize: '13px',
-        color: 'var(--ink-muted)',
-      }}>{idx + 1}</span>
-    );
-  };
+  // Rank as a plain numeral. This was 一 二 三 for the top three - readable to
+  // roughly nobody on a Bengaluru showroom floor, and a second alphabet on a
+  // sheet that already has one. The leading three are set in the display serif
+  // and inked; the rest recede. Same hierarchy, no translation required.
+  const getRankBadge = (idx) => (
+    <span
+      title={`Rank ${idx + 1}`}
+      style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: idx < 3 ? '19px' : '14px',
+        lineHeight: 1,
+        color: idx < 3 ? 'var(--ink)' : 'var(--ink-muted)',
+      }}
+    >
+      {idx + 1}
+    </span>
+  );
 
   return (
     <div className="panel">

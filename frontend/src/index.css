@@ -10,7 +10,7 @@
      handwriting face falling back to Comic Sans, which is where the whole
      "cartoonish" reading came from. Figures are tabular everywhere, so a
      column of numbers aligns and a changing digit never nudges its neighbour. */
-  --font-display: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
   --font-main: 'Instrument Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
@@ -173,13 +173,15 @@ body {
 h1, h2, h3, h4 { margin: 0; color: var(--ink); }
 h1 {
   font-family: var(--font-display);
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  font-size: 32px;
+  font-weight: 400;          /* Instrument Serif ships one weight; 700 fakes it */
+  letter-spacing: -0.01em;
+  line-height: 1.05;
 }
+/* Panel titles stay in the SANS. The serif earns its authority by scarcity -
+   put it on fourteen panel headings and it is just another body face. */
 h2 {
-  font-family: var(--font-display);
+  font-family: var(--font-main);
   font-size: 14.5px;
   font-weight: 600;
   letter-spacing: -0.005em;
@@ -194,6 +196,7 @@ h3 { font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
   display: flex;
   align-items: center;
   gap: 9px;
+  font-family: var(--font-main);
   font-size: 14.5px;
   font-weight: 600;
   letter-spacing: -0.005em;
@@ -409,7 +412,7 @@ button.primary:hover {
   line-height: 1.25;
 }
 .kpi-tile .val {
-  font-family: var(--font-display);
+  font-family: var(--font-main);
   font-size: 36px;
   font-weight: 500;
   letter-spacing: -0.035em;
@@ -787,7 +790,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   flex: none;
   border: 1px solid var(--ink);
   color: var(--ink);
-  font-family: var(--font-display);
+  font-family: var(--font-main);
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -795,8 +798,9 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 }
 .rail-name {
   font-family: var(--font-display);
-  font-size: 15px;
-  line-height: 1.25;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  line-height: 1.12;
   color: var(--ink);
 }
 .rail-place { font-size: 11px; color: var(--ink-muted); margin-top: 4px; }

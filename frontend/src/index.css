@@ -1294,3 +1294,103 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   .xp-body { grid-template-columns: 1fr; }
   .xp-tag { top: -9px; right: 10px; }
 }
+
+/* =====================================================================
+   The colophon
+   =====================================================================
+
+   A report closes by saying what it is and what it was drawn from. This
+   replaced two paragraphs of onboarding copy ("the rail on the left writes a
+   booking...") which taught a reader how the software works at the exact
+   moment they wanted to know what the month did.
+
+   The census is the useful part: a reader who reaches the bottom and sees
+   "0 vehicles on floor" knows the stock tab never loaded, without going
+   looking for it. */
+.colophon {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ink);
+}
+
+.colophon-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+  margin-bottom: 26px;
+}
+
+/* The one other place the display serif appears, matching the rail masthead:
+   a report signs off in the same hand it opened in. */
+.colophon-name {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.colophon-place {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 5px;
+}
+
+.colophon-meta { text-align: right; }
+.colophon-period {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.colophon-source {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 5px;
+}
+
+/* A census, ruled like the metric grid above it so the sheet closes in the
+   same language it was set in. */
+.colophon-census {
+  display: flex;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--grid);
+  padding-top: 16px;
+}
+.colophon-cell {
+  padding: 0 clamp(16px, 2.2vw, 30px);
+  border-left: 1px solid var(--grid);
+}
+.colophon-cell:first-child { border-left: none; padding-left: 0; }
+.colophon-n {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.colophon-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-top: 6px;
+  white-space: nowrap;
+}
+
+.colophon-note {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 22px;
+  max-width: 58ch;
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  .colophon-meta { text-align: left; }
+  .colophon-cell { padding: 0 14px 14px; }
+  .colophon-cell:first-child { padding-left: 0; }
+}

@@ -10,6 +10,7 @@ import EntryDrawer from './components/EntryDrawer';
 import ExcelUploadModal from './components/ExcelUploadModal';
 import ExportDataModal from './components/ExportDataModal';
 import ToastContainer from './components/ToastContainer';
+import SheetFooter from './components/SheetFooter';
 import Loading from './components/Loading';
 import PeriodManager from './components/PeriodManager';
 import SalesTimeline from './components/SalesTimeline';
@@ -307,34 +308,12 @@ export default function App() {
         />
       )}
 
-      {/* Two ways in. Kept because it is genuinely useful to whoever is on the
-          floor - rewritten because the old copy was one long sentence naming the
-          database vendor twice. */}
-      <footer style={{
-        marginTop: '56px',
-        paddingTop: '22px',
-        borderTop: '1px solid var(--grid)',
-        fontSize: '12px',
-        color: 'var(--ink-muted)',
-        lineHeight: '1.7',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
-        gap: '8px 36px',
-      }}>
-        <div>
-          <b style={{ color: 'var(--ink-2)' }}>Recording from here</b><br />
-          The rail on the left writes a booking, lead, test drive or allotment
-          straight into the shared record.
-        </div>
-        <div>
-          <b style={{ color: 'var(--ink-2)' }}>Recording from the workbook</b><br />
-          Upload a DSR file, or edit the tables in the cloud console. Either way
-          this sheet redraws on its own.
-        </div>
-        <div style={{ gridColumn: '1 / -1', paddingTop: '6px' }}>
-          Volkswagen Elite Motors &middot; Hosur Road, Bengaluru
-        </div>
-        </footer>
+      <SheetFooter
+        kpi={data?.kpi || {}}
+        period={activePeriodObj}
+        board={data?.board || []}
+        liveStatus={liveStatus}
+      />
       </main>
 
       {/* Overlays sit outside the sheet so the rail cannot clip them. */}

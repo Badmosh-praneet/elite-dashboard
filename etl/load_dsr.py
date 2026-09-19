@@ -63,6 +63,9 @@ class Loader:
         self.period_end = period_end
         self.counts: dict[str, int] = {}
         self.warnings: list[str] = []
+        # Sheets pulled into memory whole, for the few places that need random
+        # access - see grid().
+        self._grids: dict[str, list] = {}
 
         # caches: canonical key -> surrogate id
         self.teams: dict[str, int] = {}
@@ -144,6 +147,10 @@ class Loader:
         its key column is populated.
         """
         ws = self.wb[sheet]
+        try:
+            ws.reset_dimensions = True
+        except AttributeError:
+            pass
         for r, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), start=header_row + 1):
             # No early exit on a run of blanks: the Leads tab alone has a
             # 120-row gap before its last entries, and iter_rows is cheap enough
@@ -151,6 +158,30 @@ class Loader:
             if not row or key_col > len(row) or nz.clean(row[key_col - 1]) is None:
                 continue
             yield r, (lambda c, _row=row: _row[c - 1] if c <= len(_row) else None)
+
+    def grid(self, sheet: str) -> list:
+        """
+        A whole sheet as a list of row tuples, 1-indexed so grid[r] is row r.
+
+        Three tabs need random access (walk down looking for a header, then read
+        a column out of rows above and below it), which openpyxl refuses in
+        read_only mode. Reading the sheet out once and indexing the list keeps
+        that code working and costs nothing: the only sheet that needs it is SC
+        Performance, at 28 rows.
+        """
+        if sheet in self._grids:
+            return self._grids[sheet]
+        ws = self.wb[sheet]
+        # A workbook that under-reports its own dimensions would otherwise be
+        # truncated on read - verified row-for-row against normal mode.
+        try:
+            ws.reset_dimensions = True
+        except AttributeError:
+            pass                         # normal (non read_only) worksheet
+        rows = [()]                      # index 0 unused
+        rows.extend(ws.iter_rows(values_only=True))
+        self._grids[sheet] = rows
+        return rows
 
     def one(self, sql: str, params=()) -> int:
         return self.cx.execute(sql, params).fetchone()[0]
@@ -260,9 +291,9 @@ class Loader:
         for _, cell in self.rows("Booking & Alloted", 1, 11):
             self.consultant_id(cell(12), team=cell(13))
 
-        ws = self.wb["SC Performance"]
-        for r in range(5, ws.max_row + 1):
-            name, lead_type = cell_of(ws, r, 2), nz.upper(ws.cell(r, 3).value)
+        g = self.grid("SC Performance")
+        for r in range(5, len(g)):
+            name, lead_type = gcell(g, r, 2), nz.upper(gcell(g, r, 3))
             if not nz.consultant_key(name) or not lead_type:
                 continue
             channel = {"WALKIN": "WALKIN", "TELE": "TELE"}.get(lead_type)
@@ -608,7 +639,7 @@ class Loader:
         A row that names a person starts a new block; the row after it, which has no
         name, is that person's secondary channel.
         """
-        ws = self.wb["SC Performance"]
+        g = self.grid("SC Performance")
         cols = dict(leads_target=4, total_leads=5, leads_qualified=6, td_target=7,
                     td_achieved=8, booking_target=10, booking_achieved=11,
                     booking_achieved_total=12, retail_target=14, retail_achieved=15,
@@ -621,11 +652,11 @@ class Loader:
         field_names = list(cols)
         current_label = None
 
-        for r in range(5, ws.max_row + 1):
-            raw_label = nz.clean(ws.cell(r, 2).value) or nz.clean(ws.cell(r, 1).value)
-            lead_type = nz.clean(ws.cell(r, 3).value)
+        for r in range(5, len(g)):
+            raw_label = nz.clean(gcell(g, r, 2)) or nz.clean(gcell(g, r, 1))
+            lead_type = nz.clean(gcell(g, r, 3))
             has_numbers = any(
-                nz.as_num(ws.cell(r, c).value) is not None for c in cols.values())
+                nz.as_num(gcell(g, r, c)) is not None for c in cols.values())
             if not has_numbers:
                 continue
             # Row 30 onwards is the channel roll-up block, handled separately.
@@ -651,7 +682,7 @@ class Loader:
             else:
                 row_kind = "OTHER"          # Workshop, Co-Dealer, Javeed
 
-            values = [nz.as_num(ws.cell(r, cols[f]).value) for f in field_names]
+            values = [nz.as_num(gcell(g, r, cols[f])) for f in field_names]
             self.cx.execute(f"""
                 INSERT INTO target_consultant_scorecard
                     (period_id, consultant_id, row_label, row_kind, lead_type,
@@ -665,10 +696,10 @@ class Loader:
 
     def load_channel_funnel(self):
         """Channel roll-up at the foot of SC Performance (rows 30-35)."""
-        ws = self.wb["SC Performance"]
+        g = self.grid("SC Performance")
         header_row = None
-        for r in range(28, ws.max_row + 1):
-            if nz.upper(ws.cell(r, 3).value) == "CRM":
+        for r in range(28, len(g)):
+            if nz.upper(gcell(g, r, 3)) == "CRM":
                 header_row = r
                 break
         if header_row is None:
@@ -676,13 +707,13 @@ class Loader:
             return
 
         metric_rows = {}
-        for r in range(header_row + 1, min(header_row + 8, ws.max_row + 1)):
-            label = (nz.clean(ws.cell(r, 2).value) or "").lower()
+        for r in range(header_row + 1, min(header_row + 8, len(g))):
+            label = (nz.clean(gcell(g, r, 2)) or "").lower()
             if label in {"total leads", "qualified leads", "booking"}:
                 metric_rows[label] = r
 
-        for c in range(3, ws.max_column + 1):
-            channel = nz.upper(ws.cell(header_row, c).value)
+        for c in range(3, gwidth(g) + 1):
+            channel = nz.upper(gcell(g, header_row, c))
             if not channel:
                 continue
             self.cx.execute("""
@@ -692,11 +723,11 @@ class Loader:
                 ON CONFLICT (period_id, channel) DO NOTHING
                 """, (
                 self.period_id, channel,
-                nz.as_int(ws.cell(metric_rows["total leads"], c).value)
+                nz.as_int(gcell(g, metric_rows["total leads"], c))
                 if "total leads" in metric_rows else None,
-                nz.as_int(ws.cell(metric_rows["qualified leads"], c).value)
+                nz.as_int(gcell(g, metric_rows["qualified leads"], c))
                 if "qualified leads" in metric_rows else None,
-                nz.as_int(ws.cell(metric_rows["booking"], c).value)
+                nz.as_int(gcell(g, metric_rows["booking"], c))
                 if "booking" in metric_rows else None,
             ))
         self.counts["target_channel_funnel"] = self.one(
@@ -704,19 +735,19 @@ class Loader:
 
     def load_booking_commitments(self):
         """Book Comm VS Ach: three week windows, committed vs achieved."""
-        ws = self.wb["Book Comm VS Ach"]
+        g = self.grid("Book Comm VS Ach")
         windows = []
-        for c in range(2, ws.max_column + 1, 2):
-            label = nz.upper(ws.cell(2, c).value)
+        for c in range(2, gwidth(g) + 1, 2):
+            label = nz.upper(gcell(g, 2, c))
             if label:
                 windows.append((label, c, c + 1))
-        for r in range(3, ws.max_row + 1):
-            label = nz.upper(ws.cell(r, 1).value)
+        for r in range(3, len(g)):
+            label = nz.upper(gcell(g, r, 1))
             if not label:
                 continue
             for window, ccol, acol in windows:
-                committed = nz.as_num(ws.cell(r, ccol).value)
-                achieved = nz.as_num(ws.cell(r, acol).value)
+                committed = nz.as_num(gcell(g, r, ccol))
+                achieved = nz.as_num(gcell(g, r, acol))
                 if committed is None and achieved is None:
                     continue
                 self.cx.execute("""
@@ -739,13 +770,13 @@ class Loader:
         hide that. Views read BLOCK_2, the block with the full roster and team
         subtotals; BLOCK_1 is retained for audit.
         """
-        ws = self.wb["Daily Tracker"]
-        header_rows = [r for r in range(1, ws.max_row + 1)
-                       if nz.upper(ws.cell(r, 1).value) == "SC NAME"]
+        g = self.grid("Daily Tracker")
+        header_rows = [r for r in range(1, len(g))
+                       if nz.upper(gcell(g, r, 1)) == "SC NAME"]
         for block_no, header in enumerate(header_rows, start=1):
-            end = header_rows[block_no] if block_no < len(header_rows) else ws.max_row + 1
+            end = header_rows[block_no] if block_no < len(header_rows) else len(g)
             for r in range(header + 1, end):
-                label = nz.upper(ws.cell(r, 1).value)
+                label = nz.upper(gcell(g, r, 1))
                 if not label:
                     continue
                 self.cx.execute("""
@@ -756,11 +787,11 @@ class Loader:
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (
                     self.period_id, label, f"BLOCK_{block_no}",
-                    nz.as_num(ws.cell(r, 2).value), nz.as_num(ws.cell(r, 3).value),
-                    nz.as_num(ws.cell(r, 4).value), nz.as_num(ws.cell(r, 5).value),
-                    nz.as_num(ws.cell(r, 7).value), nz.as_num(ws.cell(r, 8).value),
-                    nz.as_num(ws.cell(r, 10).value), nz.as_num(ws.cell(r, 11).value),
-                    nz.as_num(ws.cell(r, 12).value),
+                    nz.as_num(gcell(g, r, 2)), nz.as_num(gcell(g, r, 3)),
+                    nz.as_num(gcell(g, r, 4)), nz.as_num(gcell(g, r, 5)),
+                    nz.as_num(gcell(g, r, 7)), nz.as_num(gcell(g, r, 8)),
+                    nz.as_num(gcell(g, r, 10)), nz.as_num(gcell(g, r, 11)),
+                    nz.as_num(gcell(g, r, 12)),
                 ))
         self.counts["target_daily_tracker"] = self.one(
             "SELECT count(*) FROM target_daily_tracker")
@@ -862,6 +893,19 @@ def cell_of(ws, row, col):
     return ws.cell(row, col).value
 
 
+def gcell(grid, row, col):
+    """grid[row][col] with ws.cell(row, col).value semantics: out of range is None."""
+    if row < 1 or row >= len(grid):
+        return None
+    r = grid[row]
+    return r[col - 1] if 0 < col <= len(r) else None
+
+
+def gwidth(grid) -> int:
+    """The widest row, standing in for ws.max_column."""
+    return max((len(r) for r in grid), default=0)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Load a DSR workbook into Postgres.")
     ap.add_argument("--file", default=str(DEFAULT_FILE))
@@ -876,6 +920,13 @@ def main():
         raise SystemExit(f"workbook not found: {path}")
 
     print(f"reading   {path.name}")
+    # NOT read_only=True. It opens this workbook in 0.8s instead of 22s, but
+    # openpyxl reports merged cells differently in that mode: a continuation row
+    # on SC Performance comes back carrying the consultant name above it instead
+    # of None. load_scorecards() reads that blank as "second channel row for the
+    # person above", so every continuation row became a new primary row - 24
+    # scorecard rows collapsed to 21, with channels mislabelled. Verified by
+    # loading the same workbook both ways and diffing every table.
     wb = openpyxl.load_workbook(path, data_only=True)
     print("finished reading workbook")
 

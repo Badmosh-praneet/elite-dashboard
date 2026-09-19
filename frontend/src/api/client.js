@@ -195,15 +195,50 @@ export async function uploadReportFile(file, period, uploadedBy, tableType) {
   if (uploadedBy) formData.append("uploaded_by", uploadedBy);
   if (tableType && tableType !== "auto") formData.append("table_type", tableType);
 
-  const res = await fetch("/api/upload-report", {
-    method: "POST",
-    body: formData,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.detail || "Report upload failed");
+  // A DSR workbook takes the better part of two minutes to ingest: ~2,600 rows
+  // against a database a round trip away. Anything that goes wrong in that
+  // window used to surface as the same four words - "Report upload failed" -
+  // whether the server was down, a proxy gave up, or the workbook itself was
+  // rejected. Those need different answers from whoever is standing there, so
+  // they now say different things.
+  const started = Date.now();
+  let res;
+  try {
+    res = await fetch("/api/upload-report", { method: "POST", body: formData });
+  } catch (err) {
+    // fetch only rejects when the request never completed: the server is not
+    // listening, the connection dropped, or the page navigated mid-upload.
+    const secs = Math.round((Date.now() - started) / 1000);
+    throw new Error(
+      `Could not reach the server (${err.message}). ` +
+      (secs > 20
+        ? `The connection dropped after ${secs}s — the upload may still be running on the server. Refresh before trying again.`
+        : "Check that the API is running, then try again.")
+    );
   }
-  return data;
+
+  const body = await res.text();
+  let data = null;
+  try { data = JSON.parse(body); } catch { /* not JSON - see below */ }
+
+  if (!res.ok) {
+    const secs = Math.round((Date.now() - started) / 1000);
+    if (data && data.detail) {
+      // The server rejected it and said why: a bad workbook, a missing period.
+      throw new Error(data.detail);
+    }
+    // No JSON means this did not come from the API at all - it is a proxy or
+    // gateway page. Saying so is the difference between "my file is wrong" and
+    // "something between me and the server gave up".
+    throw new Error(
+      `Upload failed with HTTP ${res.status} after ${secs}s, and the response ` +
+      `was not from the API. Something between the browser and the server ` +
+      `(dev-server proxy, gateway) ended the request — the ingest may still be ` +
+      `running. Refresh in a minute before retrying.`
+    );
+  }
+
+  return data ?? {};
 }
 
 export const uploadExcelWorkbook = uploadReportFile;

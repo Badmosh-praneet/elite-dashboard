@@ -11,6 +11,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   // What the month being uploaded into currently holds. An upload REPLACES that
   // month rather than adding to it, which is the right behaviour but invisible
   // -- so the modal says it, with the real figures, before anyone commits.
@@ -31,6 +32,15 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [period]);
+  // Counts up only while a request is in flight, and resets for the next one.
+  useEffect(() => {
+    if (!loading) return undefined;
+    setElapsed(0);
+    const started = Date.now();
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [loading]);
+
   const fileInputRef = useRef(null);
 
   if (!isOpen) return null;
@@ -252,9 +262,19 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
             }}>
               <Loader2 size={20} className="animate-spin" style={{ color: 'var(--s1)' }} />
               <div>
-                <div style={{ fontWeight: '600' }}>Ingesting report and updating Supabase database...</div>
+                <div style={{ fontWeight: '600' }}>
+                  Ingesting the workbook&hellip;{' '}
+                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{elapsed}s</span>
+                </div>
+                {/* A DSR workbook is roughly 2,600 rows written to a database a
+                    round trip away, and it genuinely takes about a minute and a
+                    half. Without saying so, a spinner at 60 seconds is
+                    indistinguishable from a hung one, and people close the tab
+                    on an ingest that was going to succeed. */}
                 <div style={{ fontSize: '11.5px', color: 'var(--ink-muted)' }}>
-                  Parsing columns, normalizing dimensions, and calculating live metrics.
+                  {elapsed < 90
+                    ? 'This usually takes about 90 seconds. Leave this open.'
+                    : 'Taking longer than usual — still working. Leave this open.'}
                 </div>
               </div>
             </div>

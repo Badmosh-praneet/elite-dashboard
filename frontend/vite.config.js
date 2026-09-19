@@ -29,6 +29,14 @@ export default defineConfig(({ mode }) => {
       '/api': {
         target: apiTarget,
         changeOrigin: true,
+        // Ingesting a DSR workbook is ~2,600 rows written to a database a
+        // round trip away and takes about 90 seconds. The proxy's default is
+        // 60, so it returned 502 at the one-minute mark while the backend
+        // carried on and finished the load - the upload appeared to fail every
+        // time despite succeeding server-side. Both values are needed:
+        // `timeout` bounds the incoming socket, `proxyTimeout` the outgoing one.
+        timeout: 300000,
+        proxyTimeout: 300000,
       },
       '/agent': {
         target: apiTarget,

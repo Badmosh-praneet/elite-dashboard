@@ -785,19 +785,26 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   margin-bottom: 28px;
 }
 
+/* The hero figure is the sans, set heavy and very tight.
+   It was Instrument Serif: handsome at 30px, but a high-contrast face pushed
+   to 104px goes thin exactly where it should be strongest - the hairlines
+   thin out to a pixel or two and the numeral reads delicate on the night
+   sheet rather than certain. Weight and tracking do the work instead, and the
+   figure now belongs to the same family as the eight metrics beneath it. */
 .hero-figure {
-  font-family: var(--font-display);
-  font-size: clamp(64px, 8vw, 104px);
-  font-weight: 400;              /* the serif has one weight */
-  line-height: 0.82;
-  letter-spacing: -0.035em;
+  font-family: var(--font-main);
+  font-size: clamp(64px, 8vw, 100px);
+  font-weight: 600;
+  line-height: 0.86;
+  letter-spacing: -0.055em;      /* tight enough to read as one mark */
   font-variant-numeric: lining-nums tabular-nums;
 }
 .hero-of {
-  font-family: var(--font-display);
-  font-size: clamp(22px, 2.4vw, 30px);
+  font-family: var(--font-main);
+  font-size: clamp(20px, 2.2vw, 27px);
+  font-weight: 400;
   color: var(--ink-muted);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   font-variant-numeric: lining-nums tabular-nums;
 }
 

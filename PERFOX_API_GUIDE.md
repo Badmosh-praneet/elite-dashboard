@@ -1,0 +1,265 @@
+# Perfox API Integration Guide
+
+This document contains the API endpoints required for the Perfox inbound/outbound agent to sync leads with the main CRM Database (Supabase).
+
+---
+
+## 0. Before anything else: can Perfox actually reach this API?
+
+Perfox runs in the cloud. It cannot reach `localhost`, `127.0.0.1`, or a private
+LAN address on your machine, no matter how the URL is written. If the agent has
+no reachable URL it will not error — the model simply answers **without** data,
+which reads as confident, detailed, and completely invented.
+
+Two things must be true:
+
+**1. The server listens on a public interface.** By default it binds to
+loopback only. Start it with:
+
+```bash
+HOST=0.0.0.0 python run.py
+```
+
+**2. There is a public URL.** On a laptop that means a tunnel:
+
+```bash
+ngrok http 8000
+```
+
+Use the `https://….ngrok-free.app` address ngrok prints as the Base URL below.
+
+> **Security — read this before opening the port.** `HOST=0.0.0.0` exposes the
+> *whole* API, not just the agent routes. That includes destructive endpoints:
+> `DELETE /api/periods/{label}` wipes a reporting month, and
+> `POST /api/upload-report` replaces one. Always set `AGENT_API_KEY` (below)
+> before exposing the app, keep the tunnel URL private, and shut the tunnel down
+> when you are not testing. The API key protects `/api/crm/*` only — the rest of
+> the API has no authentication at all.
+
+### Authentication
+
+Set a secret in `.env`:
+
+```
+AGENT_API_KEY=some-long-random-string
+```
+
+Every `/api/crm/*` request must then carry it, either way:
+
+```
+X-API-Key: some-long-random-string
+Authorization: Bearer some-long-random-string
+```
+
+If `AGENT_API_KEY` is unset the routes stay open — convenient on loopback, unsafe
+the moment the port is open.
+
+---
+
+## 1. Fetch Live Leads
+This endpoint allows the Perfox agent to pull a fresh batch of uncontacted leads directly from the client's live Supabase database. These leads are auto-synced the moment a client uploads their daily tracking excel file.
+
+**Endpoint**: `POST /api/crm/fetch-leads`
+**Base URL**: `http://<your-server-ip>:8000` (Replace `<your-server-ip>` with the actual server IP/domain)
+**Content-Type**: `application/json`
+
+### Request Payload:
+```json
+{
+  "limit": 50,          // Optional: how many to pull (default 50)
+  "status": "New",      // Optional: default "New". Matched NULL-safely, so a
+                        // lead nobody has touched counts as New.
+  "period": "active",   // Optional: "active" (default) | "AUG2026" | "all"
+  "search": null        // Optional: matches lead name or mobile
+}
+```
+
+### Example cURL:
+```bash
+curl -X POST https://<your-public-url>/api/crm/fetch-leads \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $AGENT_API_KEY" \
+  -d '{"limit": 50, "status": "New"}'
+```
+
+### Expected Response:
+An array of lead objects:
+```json
+[
+  {
+    "lead_id": 52196,
+    "lead_name": "Nikilesh S",
+    "mobile": "98xxxxxxxx",
+    "source_id": 1,
+    "source": "WALKIN",
+    "consultant_id": 87,
+    "consultant": "Sanjeev",
+    "model_id": 1,
+    "model": "VIRTUS",
+    "variant_of_interest": null,
+    "lead_status": "New",
+    "qualified_stage": "Qualified",
+    "rating": "Warm",
+    "created_at": "2026-08-01T00:00:00",
+    "period": "AUG2026"
+  }
+]
+```
+
+> Note: this endpoint previously had no period filter and matched
+> `lead_status = 'New'` on a column that is NULL for every row the dashboard or
+> a workbook writes. Since `NULL = 'New'` is never true in SQL, it could only
+> ever return rows from the 1,800-row **2024** historical dump — a lead entered
+> on the dashboard minutes earlier was invisible. Both are fixed; the default is
+> now the active reporting month.
+
+---
+
+## 2. Push New Leads (Optional)
+If the Perfox agent needs to ingest entirely *new* leads (e.g. from an inbound call that doesn't exist in the database yet), you can push them directly into the live CRM using this endpoint.
+
+**Endpoint**: `POST /api/crm/leads`
+**Base URL**: `http://<your-server-ip>:8000`
+**Content-Type**: `application/json`
+
+### Request Payload:
+```json
+{
+  "lead_name": "John Doe",
+  "phone_number": "555-0199",
+  "source_id": 1,                   // Optional (defaults to 1)
+  "consultant_id": null,            // Optional
+  "model_id": null,                 // Optional
+  "variant_of_interest": "Taigun",  // Optional
+  "origin": "MANUAL",               // Optional
+  "created_at": null,               // Optional: when the enquiry came in.
+                                    // Omit for "now". Decides which reporting
+                                    // month the lead is filed under.
+  "email": null,                    // Optional
+  "lead_type": null,                // Optional: Retail / Corporate B2B / B2C
+  "model_of_interest": null,        // Optional: free text
+  "rating": null                    // Optional: Hot / Warm / Cold
+}
+```
+
+### Example cURL:
+```bash
+curl -X POST http://<your-server-ip>:8000/api/crm/leads \
+  -H "Content-Type: application/json" \
+  -d '{
+    "lead_name": "Test Perfox Lead",
+    "source_id": 1
+  }'
+```
+
+### Expected Response:
+```json
+{
+    "status": "success",
+    "lead_id": 32450,
+    "message": "Lead created successfully",
+    "period": "SEP2026",
+    "in_active_period": false,
+    "created_at": "2026-09-18T17:55:43"
+}
+```
+
+### Does the lead show up on the dashboard?
+
+Yes — every open dashboard updates **on its own, within about a quarter of a
+second**, with no reload and no polling. The insert fires a Postgres trigger,
+which the API is listening on, which pushes a server-sent event to every open
+browser. This happens for *any* write path, so it works the same whether the row
+came from the agent, the dashboard's own form, or a bulk workbook upload.
+
+The one thing to check is **`in_active_period`**:
+
+| Value | Meaning |
+|---|---|
+| `true` | The lead is in the month the dashboard is reporting on. It appears immediately. |
+| `false` | The lead is stored and correct, but belongs to a different month. It will appear once that month is made active (period selector, top-left of the dashboard). |
+
+A lead pushed with no `created_at` is filed under **today's** month. So if the
+dashboard's active month is August and the agent pushes a lead in September,
+`in_active_period` comes back `false` and the figure will not move — the lead is
+safe, it is just filed under a month nobody is currently looking at. Switch the
+active month to match the month leads are arriving in.
+
+---
+
+## 3. Fetch Bookings
+
+Answers "what has <customer> ordered", "which orders are awaiting a car", "what
+was booked this month". Reads the same view the dashboard's order book draws, so
+the agent and the screen cannot disagree.
+
+**Endpoint**: `POST /api/crm/fetch-bookings`
+
+### Request Payload:
+```json
+{
+  "limit": 50,
+  "period": "active",      // "active" (default) | a label like "AUG2026" | "all"
+  "search": "praneet",     // Optional: matches customer name or mobile
+  "status": null           // Optional: BOOKED / NO_STOCK / ALLOTED / RETAILED / CANCELLED
+}
+```
+
+### Example cURL:
+```bash
+curl -X POST https://<your-public-url>/api/crm/fetch-bookings \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $AGENT_API_KEY" \
+  -d '{"search": "praneet gogoi", "period": "AUG2026"}'
+```
+
+### Expected Response:
+```json
+[
+  {
+    "booking_id": 4003,
+    "booking_date": "2026-08-31",
+    "customer_name": "praneet gogoi",
+    "mobile": "8822441744",
+    "consultant": "Lokesh Reddy K",
+    "model": "GOLF GTI",
+    "variant": "GT",
+    "colour": "Dolphin Grey",
+    "fulfilment_status": "BOOKED",
+    "booking_amount": 25000.0,
+    "allotted_chassis": null,
+    "source": "SHOWROOM REFERRAL"
+  }
+]
+```
+
+---
+
+## 4. What this CRM does and does not hold
+
+The agent should answer **only** from these. There is no rental, service-booking
+or appointment data anywhere in this system, so any such answer is invented:
+
+| Concept | Table | Agent endpoint |
+|---|---|---|
+| Enquiries / leads | `lead` | `/api/crm/fetch-leads` |
+| Orders / bookings | `booking` | `/api/crm/fetch-bookings` |
+| Test drives | `test_drive` | *(none yet)* |
+| Deliveries / retails | `registration` | *(none yet)* |
+| Stock / vehicles | `vehicle` | *(none yet)* |
+| Car rentals | **does not exist** | — |
+| Service appointments | **does not exist** | — |
+
+Vehicle models are limited to: **GOLF GTI, TAIGUN, TAIGUN (FL), TAYRON,
+TIGUAN R-LINE, VIRTUS**.
+
+## 5. Reporting months
+
+Every figure is scoped to a reporting month, and exactly one is "active" — the
+month the dashboard is showing. `period` defaults to `"active"`, so an agent
+asking for "this month's leads" gets the month on screen rather than the whole
+history of the table.
+
+If a customer's record does not come back, check the month before concluding it
+is absent: a booking filed under August will not appear in an `"active"` query
+while November is the active month. Pass an explicit label, or `"all"`.

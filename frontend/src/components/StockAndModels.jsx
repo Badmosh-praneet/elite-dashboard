@@ -3,32 +3,36 @@ import { Car, Layers, History } from 'lucide-react';
 import { n0, dt } from '../api/client';
 
 export default function StockAndModels({ models = [], ageing = [], activity = [] }) {
-  // Aggregate inventory ageing buckets across all models
-  const b0_30 = ageing.filter(a => a.ageing_bucket === '0-30').reduce((s, a) => s + Number(a.units || 0), 0);
-  const b31_60 = ageing.filter(a => a.ageing_bucket === '31-60').reduce((s, a) => s + Number(a.units || 0), 0);
-  const b61_90 = ageing.filter(a => a.ageing_bucket === '61-90').reduce((s, a) => s + Number(a.units || 0), 0);
-  const b90_plus = ageing.filter(a => a.ageing_bucket === '91-180' || a.ageing_bucket === '180+').reduce((s, a) => s + Number(a.units || 0), 0);
-
-  const bucketCards = [
-    { label: '0–30 Days', count: b0_30, sub: 'Fresh Stock', color: 'var(--good)' },
-    { label: '31–60 Days', count: b31_60, sub: 'Healthy Turn', color: 'var(--s1)' },
-    { label: '61–90 Days', count: b61_90, sub: 'Watchlist', color: 'var(--warning)' },
-    { label: '>90 Days', count: b90_plus, sub: 'Interest Cost', color: 'var(--critical)' },
+  // One bucket vocabulary, taken from the API rather than re-derived here. The
+  // cards used to fold 91-180 and 180+ into a single ">90", so this panel and
+  // the Stock Ageing chart above it banded the same cars differently.
+  const BANDS = [
+    { key: '0-30', label: '0–30 days', sub: 'Fresh stock', fill: 'var(--viz-a1)' },
+    { key: '31-60', label: '31–60 days', sub: 'Healthy turn', fill: 'var(--viz-a2)' },
+    { key: '61-90', label: '61–90 days', sub: 'Watchlist', fill: 'var(--viz-a3)' },
+    { key: '91-180', label: '91–180 days', sub: 'Interest cost', fill: 'var(--viz-a4)' },
+    { key: '180+', label: 'Over 180 days', sub: 'Write-down risk', fill: 'var(--viz-a5)' },
   ];
 
-  // Group ageing by model for the breakdown view
+  const unitsIn = key =>
+    ageing.filter(a => a.ageing_bucket === key)
+          .reduce((sum, a) => sum + Number(a.units || 0), 0);
+
+  // The ramp is the chart's ramp. Ageing is an ordered quantity, so it wears one
+  // hue getting darker - a green-to-red traffic light beside a single-hue chart
+  // meant the same forty-four cars were encoded two different ways on one screen.
+  const bucketCards = BANDS.map(b => ({ ...b, count: unitsIn(b.key) }));
+
+
+  // Per-model breakdown on the same five bands as the cards and the chart.
   const byModel = {};
   ageing.forEach(a => {
     const m = a.model || 'Unknown';
     if (!byModel[m]) {
-      byModel[m] = { '0-30': 0, '31-60': 0, '61-90': 0, '>90': 0, total: 0 };
+      byModel[m] = Object.fromEntries([...BANDS.map(b => [b.key, 0]), ['total', 0]]);
     }
     const u = Number(a.units || 0);
-    const b = a.ageing_bucket;
-    if (b === '0-30') byModel[m]['0-30'] += u;
-    else if (b === '31-60') byModel[m]['31-60'] += u;
-    else if (b === '61-90') byModel[m]['61-90'] += u;
-    else byModel[m]['>90'] += u;
+    if (a.ageing_bucket in byModel[m]) byModel[m][a.ageing_bucket] += u;
     byModel[m].total += u;
   });
   const modelAgeingList = Object.entries(byModel)
@@ -62,8 +66,8 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
                 <th>Model</th>
                 <th className="num">Bookings</th>
                 <th className="num">Retails</th>
-                <th className="num">Free Stock</th>
-                <th className="num">Total Stock</th>
+                <th className="num" title="Free stock">Free</th>
+                <th className="num" title="Total stock on the floor">On floor</th>
               </tr>
             </thead>
             <tbody>
@@ -126,59 +130,62 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
             <Layers size={18} style={{ color: 'var(--ink-muted)' }} />
           </div>
 
-          {/* 4 Summary Bucket Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
-            {bucketCards.map((b, idx) => (
-              <div key={b.label} style={{
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '8px' }}>
+            {bucketCards.map(b => (
+              <div key={b.key} style={{
                 background: 'var(--surface-sub)',
-                borderRadius: '8px',
-                padding: '12px 10px',
-                textAlign: 'center',
-                borderTop: `3px solid ${b.color}`,
+                border: '1px solid var(--grid)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '11px 10px 12px',
               }}>
-                <div style={{ fontSize: '11px', color: 'var(--ink-muted)', fontWeight: '600' }}>
-                  {b.label}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 7 }}>
+                  <span style={{ width: 7, height: 7, flex: 'none', background: b.fill }} />
+                  <span style={{ fontSize: '10px', color: 'var(--ink-muted)', letterSpacing: '0.04em' }}>
+                    {b.label}
+                  </span>
                 </div>
-                <div style={{ fontSize: '20px', fontWeight: '800', marginTop: '4px', color: b.color }}>
+                <div style={{
+                  fontFamily: 'var(--font-display)', fontSize: '22px',
+                  lineHeight: 1, color: 'var(--ink)',
+                  fontVariantNumeric: 'lining-nums tabular-nums',
+                }}>
                   {n0(b.count)}
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--ink-muted)', marginTop: '2px' }}>
+                <div style={{ fontSize: '10.5px', color: 'var(--ink-muted)', marginTop: '5px' }}>
                   {b.sub}
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Model Breakdown */}
           {modelAgeingList.length > 0 && (
-            <div style={{ marginTop: '14px', borderTop: '1px solid var(--grid)', paddingTop: '10px' }}>
-              <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--ink-muted)', marginBottom: '6px' }}>
-                Model Ageing Breakdown (Units)
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
-                {modelAgeingList.map(item => (
-                  <div key={item.model} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    background: 'var(--surface-sub)',
-                  }}>
-                    <span style={{ fontWeight: '600' }}>{item.model}</span>
-                    <div style={{ display: 'flex', gap: '12px', color: 'var(--ink-2)', fontSize: '11.5px' }}>
-                      <span title="0-30 Days">0-30d: <b>{item['0-30']}</b></span>
-                      <span title="31-60 Days">31-60d: <b>{item['31-60']}</b></span>
-                      <span title="61-90 Days">61-90d: <b>{item['61-90']}</b></span>
-                      <span title="Over 90 Days" style={{ color: item['>90'] > 0 ? 'var(--critical)' : 'inherit' }}>
-                        &gt;90d: <b>{item['>90']}</b>
-                      </span>
-                      <span style={{ fontWeight: '700', borderLeft: '1px solid var(--border)', paddingLeft: '8px' }}>
-                        Total: {item.total}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+            <div style={{ marginTop: '16px' }}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      {BANDS.map(b => (
+                        <th key={b.key} className="num" title={b.sub}>{b.key}</th>
+                      ))}
+                      <th className="num">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelAgeingList.map(item => (
+                      <tr key={item.model}>
+                        <td style={{ fontWeight: 600 }}>{item.model}</td>
+                        {BANDS.map(b => (
+                          <td key={b.key} className="num"
+                              style={{ color: item[b.key] ? 'var(--ink)' : 'var(--ink-muted)' }}>
+                            {item[b.key] || '–'}
+                          </td>
+                        ))}
+                        <td className="num" style={{ fontWeight: 600 }}>{item.total}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -188,7 +195,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
         <div style={{ flex: 1, borderTop: '1px solid var(--grid)', paddingTop: '14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
             <History size={15} style={{ color: 'var(--s1)' }} />
-            <h3 style={{ margin: 0, fontSize: '13px' }}>Recent Cloud Database Activity</h3>
+            <h3 style={{ margin: 0, fontSize: '13px' }}>Recently Recorded</h3>
           </div>
 
           <div style={{ maxHeight: '150px', overflowY: 'auto', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -211,7 +218,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
               ))
             ) : (
               <div style={{ color: 'var(--ink-muted)' }}>
-                New entries saved via Way 1 or Way 2 will appear here.
+                Bookings, leads and test drives appear here as they are recorded.
               </div>
             )}
           </div>

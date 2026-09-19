@@ -29,30 +29,93 @@ export async function sendJson(method, path, body) {
   return data;
 }
 
-export async function fetchDashboardData() {
+/**
+ * `onProgress(done, total)` fires as each call lands. The whole payload takes
+ * the better part of five seconds against a database a round trip away, so the
+ * loading screen can say how far along it is instead of spinning blindly.
+ */
+export const DASHBOARD_CALLS = 16;
+
+/**
+ * One request for the whole dashboard.
+ *
+ * Profiling put every round trip to this database at ~370 ms and showed the SQL
+ * itself is free, so sixteen endpoints cost ~5 s of almost pure waiting.
+ * Postgres builds the same payload as JSON in a single statement. The sixteen
+ * routes still exist and this falls back to them, so a failure here is slow
+ * rather than fatal.
+ */
+async function fetchBundled(onProgress) {
+  const res = await fetch("/api/dashboard");
+  if (!res.ok) throw new Error(`bundle unavailable (${res.status})`);
+  const d = await res.json();
+  if (onProgress) onProgress(DASHBOARD_CALLS);
+  const stage = name => (d.funnel?.stages || []).find(s => s.stage === name)?.target;
+  return {
+    kpi: {
+      ...d.kpi,
+      booking_target: d.kpi?.booking_target ?? stage("Bookings") ?? 84,
+      retail_target: d.kpi?.retail_target ?? stage("Retails") ?? 66,
+      leads_target: d.kpi?.leads_target ?? stage("Enquiries") ?? 450,
+      td_target: d.kpi?.td_target ?? stage("Test drives") ?? 300,
+    },
+    trends: d.trends || {},
+    funnel: d.funnel || {},
+    board: d.board || [],
+    sources: d.sources || [],
+    models: d.models || [],
+    ageing: d.ageing || [],
+    backorders: d.backorders || [],
+    periods: d.periods || [],
+    options: d.options || {},
+    activity: [],
+    orderbook: d.orderbook || [],
+    scorecards: d.scorecards || [],
+    commitments: d.commitments || [],
+    attachments: d.attachments || null,
+    dataQuality: d.dataQuality || [],
+    isLive: true,
+  };
+}
+
+export async function fetchDashboardData(onProgress) {
+  try {
+    return await fetchBundled(onProgress);
+  } catch (err) {
+    console.warn("Bundled dashboard unavailable, falling back to per-endpoint:", err.message);
+  }
+  let done = 0;
+  const step = promise => {
+    promise.then(
+      () => onProgress && onProgress(++done),
+      () => onProgress && onProgress(++done),
+    );
+    return promise;
+  };
   try {
     const [
-      kpi, funnel, board, sources, models, ageing, backorders,
+      kpi, trends, funnel, board, sources, models, ageing, backorders,
       periods, options, activity, orderbook,
       scorecards, commitments, attachments, dataQuality
     ] = await Promise.all([
-      api("/api/kpi"),
-      api("/api/funnel"),
-      api("/api/leaderboard"),
-      api("/api/leads/sourcewise"),
-      api("/api/models/position"),
-      api("/api/stock/ageing"),
-      api("/api/backorders"),
-      api("/api/periods"),
-      api("/api/entry-options"),
-      api("/api/recent-activity?limit=15"),
+      step(api("/api/kpi")),
+      step(api("/api/kpi/trends")),
+      step(api("/api/funnel")),
+      step(api("/api/leaderboard")),
+      step(api("/api/leads/sourcewise")),
+      step(api("/api/models/position")),
+      step(api("/api/stock/ageing")),
+      step(api("/api/backorders")),
+      step(api("/api/periods")),
+      step(api("/api/entry-options")),
+      step(api("/api/recent-activity?limit=15")),
       // The booking trend plots one point per day, so it needs the whole month,
       // not the first page.
-      api("/api/bookings?limit=1000"),
-      api("/api/scorecards"),
-      api("/api/commitments"),
-      api("/api/attachments"),
-      api("/api/data-quality"),
+      step(api("/api/bookings?limit=1000")),
+      step(api("/api/scorecards")),
+      step(api("/api/commitments")),
+      step(api("/api/attachments")),
+      step(api("/api/data-quality")),
     ]);
 
     // Enrich KPI with targets from funnel stages if not directly set
@@ -70,7 +133,7 @@ export async function fetchDashboardData() {
     };
 
     return {
-      kpi: enrichedKpi, funnel, board, sources, models, ageing, backorders,
+      kpi: enrichedKpi, trends, funnel, board, sources, models, ageing, backorders,
       periods, options, activity, orderbook,
       scorecards, commitments, attachments, dataQuality,
       isLive: true,
@@ -115,6 +178,7 @@ export async function fetchDashboardData() {
       options: { consultants: [], models: [], sources: [], colours: [], open_bookings: [], free_chassis: [] },
       activity: [],
       orderbook: [],
+      trends: {},
       scorecards: [],
       commitments: [],
       attachments: null,
@@ -143,6 +207,98 @@ export async function uploadReportFile(file, period, uploadedBy, tableType) {
 }
 
 export const uploadExcelWorkbook = uploadReportFile;
+
+/* ---- Export ---- */
+
+/**
+ * What can be exported, with live row counts, so the picker can say what a
+ * selection will produce before anyone commits to building it.
+ */
+export async function fetchExportManifest(scope = "current") {
+  const res = await fetch(`/api/export/manifest?scope=${encodeURIComponent(scope)}`);
+  if (res.ok) return res.json();
+
+  // A 404 here means something specific and fixable: the page is newer than the
+  // server it is talking to. run.py starts uvicorn with reload=False, so a
+  // backend left running from before the export routes existed serves the new
+  // bundle happily and then 404s on them. Saying "Not Found" sends someone
+  // hunting through the frontend for a bug that is not there.
+  if (res.status === 404) {
+    const err = new Error(
+      "The export service is not running on the server yet. The API needs to be " +
+      "restarted so it picks up the export routes."
+    );
+    err.status = 404;
+    throw err;
+  }
+
+  const data = await res.json().catch(() => null);
+  const err = new Error((data && data.detail) || `${res.status} ${res.statusText}`);
+  err.status = res.status;
+  throw err;
+}
+
+/**
+ * Build an export and put it where it was asked to go.
+ *
+ * A local export comes back as bytes rather than JSON, so this saves the blob
+ * itself and reports what it saved. The row and sheet counts ride on response
+ * headers because a blob tells the browser nothing about what is inside it.
+ */
+export async function runExport({
+  format, scope, template, groups, datasets, destination, filename,
+}) {
+  const res = await fetch("/api/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // `filename` is left out when undefined, which is what tells the server to
+    // stamp its own month-and-minute name.
+    body: JSON.stringify({
+      format, scope, template, groups, datasets, destination, filename,
+    }),
+  });
+
+  if (!res.ok) {
+    // A failure is JSON even when success is not.
+    const data = await res.json().catch(() => null);
+    throw new Error((data && data.detail) || `${res.status} ${res.statusText}`);
+  }
+
+  // A cloud destination answers with JSON; only a local one sends a file.
+  const type = res.headers.get("Content-Type") || "";
+  if (type.includes("application/json")) return res.json();
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  // What the server actually called it, which is not necessarily what was
+  // asked for - it strips anything that cannot go in a file name, and adds the
+  // extension the chosen format needs.
+  const savedAs =
+    res.headers.get("X-Export-Filename") ||
+    (disposition.match(/filename="?([^"]+)"?/) || [])[1] ||
+    "dsr-export";
+
+  // The one thing a fetch cannot do on its own: hand the file to the user. The
+  // object URL is revoked on the next frame - revoking it immediately cancels
+  // the download in Firefox.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = savedAs;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  return {
+    status: "success",
+    destination: destination || "local",
+    filename: savedAs,
+    bytes: blob.size,
+    rows: Number(res.headers.get("X-Export-Rows") || 0),
+    sheets: Number(res.headers.get("X-Export-Sheets") || 0),
+  };
+}
 
 export async function activatePeriod(label) {
   return sendJson("POST", `/api/period/${encodeURIComponent(label)}/activate`);

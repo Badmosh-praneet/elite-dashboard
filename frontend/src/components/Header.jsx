@@ -13,6 +13,18 @@ export default function Header({
 }) {
   const activeObj = periods.find(p => p.label === activePeriod) || {};
 
+  // "1 - 31 August 2026" rather than "2026-08-01 to 2026-08-31": the same fact,
+  // written the way a person would say it. The month name carries the period,
+  // so the AUG2026 code is left to the selector instead of being printed twice.
+  const span = (() => {
+    const { period_start: a, period_end: b } = activeObj;
+    if (!a || !b) return null;
+    const from = new Date(a), to = new Date(b);
+    if (Number.isNaN(+from) || Number.isNaN(+to)) return null;
+    const month = to.toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return `${from.getUTCDate()}–${to.getUTCDate()} ${month}`;
+  })();
+
   return (
     <header style={{
       display: 'flex',
@@ -20,29 +32,38 @@ export default function Header({
       gap: '16px',
       alignItems: 'flex-end',
       justifyContent: 'space-between',
-      marginBottom: '22px',
+      marginBottom: '38px',
+      paddingBottom: '22px',
+      borderBottom: '1px solid var(--grid)',
     }}>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
           <span style={{
-            background: 'var(--s1)',
-            color: '#fff',
-            fontWeight: '800',
-            fontSize: '13px',
-            padding: '3px 8px',
-            borderRadius: '6px',
-            letterSpacing: '0.05em',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '40px',
+            height: '40px',
+            border: '1.5px solid var(--shu)',
+            color: 'var(--shu-ink)',
+            fontFamily: 'var(--font-display)',
+            fontWeight: '600',
+            fontSize: '14px',
+            letterSpacing: '0.04em',
+            borderRadius: '2px',
+            transform: 'rotate(-2.5deg)',
+            flex: 'none',
           }}>VW</span>
-          <h1 style={{ fontSize: '22px', fontWeight: '800', letterSpacing: '-0.02em', margin: 0 }}>
-            Volkswagen Elite Motors &mdash; Daily Sales Report
+          <h1 style={{ margin: 0 }}>
+            Volkswagen Elite Motors
           </h1>
         </div>
-        <div style={{ color: 'var(--ink-2)', fontSize: '13px' }}>
-          {activeObj.label ? (
+        <div style={{ color: 'var(--ink-muted)', fontSize: '12.5px', letterSpacing: '0.04em' }}>
+          {span ? (
             <span>
-              Month: <b>{activeObj.label}</b> ({activeObj.period_start} to {activeObj.period_end}) &bull; Hosur Road, Bengaluru
+              {span} &nbsp;·&nbsp; Hosur Road, Bengaluru
             </span>
-          ) : 'Loading period...'}
+          ) : 'Preparing the sheet…'}
         </div>
       </div>
 
@@ -51,7 +72,7 @@ export default function Header({
           value={activePeriod}
           onChange={e => onPeriodChange(e.target.value)}
           title="Switch reporting month"
-          style={{ fontWeight: '600', padding: '6px 12px' }}
+          className="period-select"
         >
           {periods.map(p => (
             <option key={p.label} value={p.label}>
@@ -72,6 +93,7 @@ export default function Header({
         <button
           onClick={onToggleTables}
           aria-pressed={showTables}
+          aria-label={showTables ? 'Hide data tables' : 'Show data tables'}
           title="Toggle comprehensive data tables"
           style={{
             background: showTables ? 'var(--surface-sub)' : 'transparent',
@@ -84,7 +106,8 @@ export default function Header({
 
         <button
           onClick={onToggleTheme}
-          title="Toggle Dark / Light theme"
+          title={theme === 'dark' ? 'Switch to the paper sheet' : 'Switch to the night sheet'}
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           style={{ padding: '7px 10px' }}
         >
           {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}

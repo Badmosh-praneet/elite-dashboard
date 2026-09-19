@@ -1,160 +1,178 @@
+/**
+ * Lead sources and model demand.
+ *
+ * Both charts previously ran an eight-colour palette of their own, which
+ * survived the theme change and was the last thing on the page not made of ink.
+ * Sources are now a ranked bar in a single hue - the bar length already carries
+ * the magnitude, so varying colour per source added nothing but noise, and a
+ * horizontal bar reads names like "WORKSHOP REFERRAL" that a donut cannot.
+ */
+
 import React from 'react';
 import {
-  PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
+  Tooltip as RechartsTooltip, Legend, LabelList,
 } from 'recharts';
 
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
+
+function Tip({ active, payload, label, rows }) {
+  if (!active || !payload || !payload.length) return null;
+  const point = payload[0].payload || {};
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--grid)',
+      padding: '10px 14px',
+      borderRadius: 'var(--radius-sm)',
+      boxShadow: 'var(--shadow-md)',
+      color: 'var(--ink)',
+      fontSize: '12px',
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
+      {payload.map((entry, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, lineHeight: 1.7 }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: '50%',
+            background: entry.color || entry.fill, flexShrink: 0,
+          }} />
+          <span style={{ color: 'var(--ink-2)' }}>{entry.name}</span>
+          <b style={{ marginLeft: 'auto' }}>{entry.value}</b>
+        </div>
+      ))}
+      {rows && point.qualified != null && (
+        <div style={{ marginTop: 6, color: 'var(--ink-muted)' }}>
+          {point.qualified} qualified &middot; {point.qualified_pct}%
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Empty({ children }) {
+  return (
+    <div style={{
+      display: 'flex', height: '100%', alignItems: 'center',
+      justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 13,
+    }}>
+      {children}
+    </div>
+  );
+}
+
 export default function Visualizations({ sources = [], models = [] }) {
-  // Use a modern, aesthetic color palette
-  const COLORS = ['#0ea5e9', '#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6'];
-
-  // Format data for the pie chart (filter out sources with 0 leads)
-  const pieData = sources
+  const sourceData = sources
     .filter(s => s.leads > 0)
-    .sort((a, b) => b.leads - a.leads);
+    .sort((a, b) => b.leads - a.leads)
+    .map(s => ({
+      source: s.source,
+      Leads: Number(s.leads) || 0,
+      qualified: Number(s.qualified) || 0,
+      qualified_pct: s.qualified_pct,
+    }));
 
-  // Format data for the bar chart
-  // The 'models' prop usually corresponds to the v_model_position view (families)
   // v_model_position names the count bookings_this_period; v_model_demand names
   // it bookings. This chart is fed the former, so reading m.bookings drew every
   // bar at zero. Accept either, so it keeps working whichever view supplies it.
   const barData = models.map(m => ({
     family: m.family || m.model || 'Unknown',
     Bookings: m.bookings_this_period ?? m.bookings ?? 0,
-    'Free Stock': m.free_stock ?? 0
+    'Free Stock': m.free_stock ?? 0,
   }));
 
-  // Custom tooltips
-  const CustomPieTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div style={{
-          background: 'var(--panel-bg)',
-          border: '1px solid var(--grid)',
-          padding: '10px 15px',
-          borderRadius: '8px',
-          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
-          color: 'var(--ink)'
-        }}>
-          <p style={{ margin: 0, fontWeight: 600 }}>{data.source}</p>
-          <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--ink-muted)' }}>
-            Leads: <span style={{ color: payload[0].payload.fill, fontWeight: 'bold' }}>{data.leads}</span>
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  const CustomBarTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div style={{
-          background: 'var(--panel-bg)',
-          border: '1px solid var(--grid)',
-          padding: '10px 15px',
-          borderRadius: '8px',
-          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
-          color: 'var(--ink)'
-        }}>
-          <p style={{ margin: '0 0 8px 0', fontWeight: 600 }}>{label}</p>
-          {payload.map((entry, index) => (
-            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', fontSize: '14px' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: entry.color }} />
-              <span style={{ color: 'var(--ink-muted)' }}>{entry.name}:</span>
-              <span style={{ fontWeight: 'bold' }}>{entry.value}</span>
-            </div>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
-
   return (
-    <div className="grid-2" style={{ marginTop: '20px' }}>
-      {/* Leads Source Pie Chart */}
+    <div className="grid-2">
+      {/* Lead sources - one series, so the title names it and no legend is needed. */}
       <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="panel-header" style={{ marginBottom: '10px' }}>
-          <h2>Lead Sources Breakdown</h2>
-          <span style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>Current Period</span>
+        <div className="panel-header">
+          <h2>Lead Sources</h2>
+          <span style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>
+            Enquiries this period, largest first
+          </span>
         </div>
         <div style={{ height: '300px', width: '100%' }}>
-          {pieData.length > 0 ? (
+          {sourceData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={70}
-                  outerRadius={100}
-                  paddingAngle={3}
-                  dataKey="leads"
-                  nameKey="source"
-                  stroke="none"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <RechartsTooltip content={<CustomPieTooltip />} />
-                <Legend 
-                  wrapperStyle={{ fontSize: '12px', color: 'var(--ink-muted)' }} 
-                  iconType="circle" 
+              <BarChart
+                data={sourceData}
+                layout="vertical"
+                margin={{ top: 4, right: 44, left: 4, bottom: 0 }}
+                barSize={17}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" horizontal={false} />
+                <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS} />
+                <YAxis
+                  type="category"
+                  dataKey="source"
+                  width={146}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ ...AXIS, fontSize: 11 }}
+                  interval={0}
                 />
-              </PieChart>
+                <RechartsTooltip
+                  content={props => <Tip {...props} rows />}
+                  cursor={{ fill: 'var(--grid)', opacity: 0.4 }}
+                />
+                <Bar dataKey="Leads" fill="var(--viz-1)" radius={[0, 3, 3, 0]}>
+                  <LabelList
+                    dataKey="Leads"
+                    position="right"
+                    style={{ fill: 'var(--ink-muted)', fontSize: 11 }}
+                  />
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-muted)' }}>
-              No leads data available
-            </div>
+            <Empty>No lead data for this period</Empty>
           )}
         </div>
       </div>
 
-      {/* Model Demand Bar Chart */}
+      {/* Model demand vs supply */}
       <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="panel-header" style={{ marginBottom: '10px' }}>
+        <div className="panel-header">
           <h2>Model Demand vs Supply</h2>
-          <span style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>Bookings vs Free Stock</span>
+          <span style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>
+            Bookings against cars on the floor
+          </span>
         </div>
         <div style={{ height: '300px', width: '100%' }}>
           {barData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={barData}
-                margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                margin={{ top: 16, right: 10, left: -20, bottom: 0 }}
                 barGap={2}
                 barSize={30}
               >
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--grid)" />
-                <XAxis 
-                  dataKey="family" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: 'var(--ink-muted)', fontSize: 12 }} 
-                  dy={10} 
+                <XAxis
+                  dataKey="family"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={AXIS}
+                  dy={10}
                 />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: 'var(--ink-muted)', fontSize: 12 }} 
+                <YAxis axisLine={false} tickLine={false} tick={AXIS} />
+                <RechartsTooltip
+                  content={props => <Tip {...props} />}
+                  cursor={{ fill: 'var(--grid)', opacity: 0.4 }}
                 />
-                <RechartsTooltip content={<CustomBarTooltip />} cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
-                <Legend 
-                  wrapperStyle={{ fontSize: '12px', color: 'var(--ink-muted)', paddingTop: '10px' }} 
-                  iconType="circle" 
+                <Legend
+                  wrapperStyle={{ fontSize: '12px', color: 'var(--ink-muted)', paddingTop: '10px' }}
+                  iconType="circle"
+                  payload={[
+                    { value: 'Bookings', type: 'circle', id: 'b', color: 'var(--viz-1)' },
+                    { value: 'Free Stock', type: 'circle', id: 'f', color: 'var(--viz-2)' },
+                  ]}
                 />
-                <Bar dataKey="Bookings" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Free Stock" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Bookings" fill="var(--viz-1)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Free Stock" fill="var(--viz-2)" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-muted)' }}>
-              No model data available
-            </div>
+            <Empty>No model data available</Empty>
           )}
         </div>
       </div>

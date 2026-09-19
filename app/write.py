@@ -191,9 +191,9 @@ def create_lead(cx, body: LeadIn) -> dict:
     lead_id = _one(cx, """
         INSERT INTO lead (lead_name, mobile, email, source_id, lead_type,
                           model_of_interest, model_id, consultant_id, rating,
-                          qualified_stage, created_at, period_id,
+                          qualified_stage, lead_status, created_at, period_id,
                           is_current_period, origin, entered_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'MANUAL',%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'New',%s,%s,%s,'MANUAL',%s)
         RETURNING lead_id
     """, (
         body.lead_name, body.mobile, body.email,

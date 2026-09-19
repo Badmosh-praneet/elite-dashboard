@@ -12,8 +12,7 @@ export default function HeroMetric({ kpi = {} }) {
   const getMeterColor = (p) => {
     if (p >= 95) return 'var(--good)';
     if (p >= 75) return 'var(--warning)';
-    if (p >= 50) return 'var(--serious)';
-    return 'var(--s1)';
+    return 'var(--shu)';
   };
 
   return (
@@ -23,29 +22,32 @@ export default function HeroMetric({ kpi = {} }) {
       flexWrap: 'wrap',
       gap: '24px',
       alignItems: 'center',
-      borderLeft: '4px solid var(--s1)',
+      borderLeft: '2.5px solid var(--shu)',
     }}>
       <div>
         <div style={{
-          fontSize: '12px',
-          fontWeight: '700',
+          fontSize: '10.5px',
+          fontWeight: '500',
           textTransform: 'uppercase',
-          letterSpacing: '0.06em',
+          letterSpacing: '0.15em',
           color: 'var(--ink-muted)',
-          marginBottom: '4px',
+          marginBottom: '10px',
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
         }}>
-          <Target size={14} style={{ color: 'var(--s1)' }} />
+          <Target size={13} style={{ color: 'var(--shu)' }} />
           <span>Bookings This Month</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-          <span style={{ fontSize: '54px', fontWeight: '800', lineHeight: 1, letterSpacing: '-0.03em' }}>
+          <span className="hero-figure" style={{ fontWeight: 500 }}>
             {n0(bookings)}
           </span>
-          <span style={{ fontSize: '18px', color: 'var(--ink-muted)', fontWeight: '500' }}>
-            / {n0(target)} target
+          <span style={{
+            fontFamily: 'var(--font-display)', fontSize: '17px',
+            color: 'var(--ink-muted)', fontWeight: '400',
+          }}>
+            / {n0(target)}
           </span>
         </div>
       </div>
@@ -56,7 +58,7 @@ export default function HeroMetric({ kpi = {} }) {
             Target Achievement: <b>{pct(ratio)}</b>
           </span>
           <span style={{ color: shortfall > 0 ? 'var(--serious)' : 'var(--good)', fontWeight: '600' }}>
-            {shortfall > 0 ? `${n0(shortfall)} units to goal` : '✓ Goal Achieved'}
+            {shortfall > 0 ? `${n0(shortfall)} units to goal` : 'Goal reached'}
           </span>
         </div>
         <div style={{

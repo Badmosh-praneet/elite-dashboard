@@ -1,5 +1,4 @@
 import React from 'react';
-import { Trophy, Award, Medal } from 'lucide-react';
 import { n0, pct } from '../api/client';
 
 export default function Leaderboard({ board = [] }) {
@@ -17,11 +16,33 @@ export default function Leaderboard({ board = [] }) {
   const totalRetails = sorted.reduce((sum, c) => sum + Number(c.retail_achieved ?? c.retails ?? 0), 0);
   const totalAch = totalTarget > 0 ? (totalBookings / totalTarget) * 100 : null;
 
+  // Rank as a written numeral rather than a medal. Gold/silver/bronze is a
+  // metaphor borrowed from games, and it forced three colours that belong to no
+  // palette here; 一 二 三 says the same thing in the page's own voice, with
+  // only the leader inked in vermilion.
+  const KANJI = ['一', '二', '三'];
   const getRankBadge = (idx) => {
-    if (idx === 0) return <span style={{ color: '#eab308' }} title="Top Performer"><Trophy size={16} /></span>;
-    if (idx === 1) return <span style={{ color: '#94a3b8' }} title="2nd Place"><Medal size={16} /></span>;
-    if (idx === 2) return <span style={{ color: '#b45309' }} title="3rd Place"><Award size={16} /></span>;
-    return <span style={{ color: 'var(--ink-muted)', fontSize: '12px', fontWeight: '600' }}>#{idx + 1}</span>;
+    if (idx < 3) {
+      return (
+        <span
+          title={`Rank ${idx + 1}`}
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '17px',
+            lineHeight: 1,
+            color: idx === 0 ? 'var(--shu-ink)' : 'var(--ink-2)',
+          }}
+        >
+          {KANJI[idx]}
+        </span>
+      );
+    }
+    return (
+      <span style={{
+        fontFamily: 'var(--font-display)', fontSize: '13px',
+        color: 'var(--ink-muted)',
+      }}>{idx + 1}</span>
+    );
   };
 
   return (
@@ -30,10 +51,9 @@ export default function Leaderboard({ board = [] }) {
         <div>
           <h2>Consultant Leaderboard</h2>
           <div style={{ fontSize: '12px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-            Live performance tracking by sales consultant
+            Ranked by bookings against target
           </div>
         </div>
-        <Trophy size={18} style={{ color: 'var(--ink-muted)' }} />
       </div>
 
       <div className="table-wrap">

@@ -71,29 +71,37 @@ export default function SalesFunnel({ funnel = {} }) {
 
               {/* Progress bar container with target tick */}
               <div style={{
-                height: '14px',
-                background: 'var(--surface-sub)',
-                borderRadius: '6px',
+                height: '12px',
+                background: 'var(--sunken)',
+                borderRadius: '2px',
                 position: 'relative',
-                overflow: 'hidden',
+                /* The target mark has to sit ON the bar's end, so the track
+                   cannot clip it. */
+                overflow: 'visible',
               }}>
                 <div style={{
                   height: '100%',
                   width: `${Math.max(1.5, pctOfMax)}%`,
-                  background: 'var(--s1)',
-                  borderRadius: '6px',
+                  background: 'var(--viz-1)',
+                  borderRadius: '2px',
                   transition: 'width 0.4s ease',
                 }} />
                 {tgtPct != null && (
-                  <div style={{
-                    position: 'absolute',
-                    left: `${tgtPct}%`,
-                    top: 0,
-                    bottom: 0,
-                    width: '2px',
-                    background: 'var(--ink)',
-                    zIndex: 2,
-                  }} title={`Target: ${tgt}`} />
+                  /* A full-height rule in seal ink with a cap above it: the old
+                     2px tick in --ink was the same weight as the bar's own edge
+                     and read as part of the fill. */
+                  <div
+                    title={`Target: ${tgt}`}
+                    style={{
+                      position: 'absolute',
+                      left: `${tgtPct}%`,
+                      top: '-4px',
+                      bottom: '-4px',
+                      width: '2px',
+                      background: 'var(--shu)',
+                      zIndex: 2,
+                    }}
+                  />
                 )}
               </div>
             </div>

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import Header from './components/Header';
-import Way1ActionBar from './components/Way1ActionBar';
+import Rail from './components/Rail';
 import HeroMetric from './components/HeroMetric';
 import KpiTiles from './components/KpiTiles';
 import SalesFunnel from './components/SalesFunnel';
@@ -9,11 +8,61 @@ import StockAndModels from './components/StockAndModels';
 import DataTables from './components/DataTables';
 import EntryDrawer from './components/EntryDrawer';
 import ExcelUploadModal from './components/ExcelUploadModal';
+import ExportDataModal from './components/ExportDataModal';
 import ToastContainer from './components/ToastContainer';
+import Loading from './components/Loading';
+import PeriodManager from './components/PeriodManager';
+import SalesTimeline from './components/SalesTimeline';
 import Visualizations from './components/Visualizations';
 import Analytics from './components/Analytics';
-import { fetchDashboardData, activatePeriod } from './api/client';
+import { fetchDashboardData, activatePeriod, DASHBOARD_CALLS } from './api/client';
 import { setupLiveEvents } from './api/liveEvents';
+
+/**
+ * A seam. Fourteen panels in one column read as an undifferentiated scroll, so
+ * the page is divided into acts - the label sits on a rule the way a seam runs
+ * across cloth, rather than being another heavy heading competing with the
+ * panel titles beneath it.
+ */
+const SECTIONS = [
+  { id: 'month', label: 'This month', note: null },
+  { id: 'sources', label: 'Where it comes from', note: 'Enquiries, demand and who is converting' },
+  { id: 'running', label: 'How the month is running', note: 'Pace against target, and what is holding orders up' },
+  { id: 'floor', label: 'What is on the floor', note: 'Stock by model and how long it has been standing' },
+];
+
+/**
+ * A seam, and the anchor the rail points at. Fourteen panels in one column read
+ * as an undifferentiated scroll, so the page is divided into acts - the label
+ * sits on a rule the way a seam runs across cloth, rather than being another
+ * heavy heading competing with the panel titles beneath it.
+ */
+function Seam({ id, label, note }) {
+  return (
+    <div id={id} style={{
+      margin: '52px 0 22px', display: 'flex', alignItems: 'baseline', gap: '16px',
+      scrollMarginTop: '24px',
+    }}>
+      <div style={{ flex: 'none' }}>
+        <div style={{
+          fontSize: '11px', letterSpacing: '0.2em', textTransform: 'uppercase',
+          color: 'var(--ink-2)',
+        }}>
+          {label}
+        </div>
+        {note && (
+          <div style={{ fontSize: '11.5px', color: 'var(--ink-muted)', marginTop: '3px' }}>
+            {note}
+          </div>
+        )}
+      </div>
+      <div style={{
+        flex: 1, height: '1px', transform: 'translateY(-4px)',
+        background: 'linear-gradient(to right, var(--axis), transparent)',
+      }} />
+    </div>
+  );
+}
 
 export default function App() {
   const [data, setData] = useState(null);
@@ -21,13 +70,18 @@ export default function App() {
   const [error, setError] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [liveStatus, setLiveStatus] = useState({ state: 'off', text: 'connecting' });
+  const [loaded, setLoaded] = useState(0);
 
   // UI States
-  const [theme, setTheme] = useState(() => localStorage.getItem('dsr.theme') || 'light');
+  // The night sheet is the design's primary state now, so it is what an
+  // unconfigured browser gets.
+  const [theme, setTheme] = useState(() => localStorage.getItem('dsr.theme') || 'dark');
   const [showTables, setShowTables] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('booking');
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [periodsOpen, setPeriodsOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
 
   // Toast Helper
@@ -41,8 +95,10 @@ export default function App() {
 
   // Theme synchronization
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
+    // :root carries the dark palette, so it is LIGHT that is stamped on the
+    // element - the reverse of the previous arrangement.
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
     } else {
       document.documentElement.removeAttribute('data-theme');
     }
@@ -53,23 +109,36 @@ export default function App() {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // Whether a load has ever succeeded, and whether one is in flight. Both are
-  // refs rather than state on purpose: loadData must keep a stable identity, or
-  // the effect below re-runs on every fetch.
+  // Whether a load has ever succeeded, and the load currently in flight. Both
+  // are refs rather than state on purpose: loadData must keep a stable
+  // identity, or the effect below re-runs on every fetch.
   const hasLoadedRef = useRef(false);
-  const inFlightRef = useRef(false);
+  const inFlightRef = useRef(null);
 
   // Data fetching
   const loadData = useCallback(async (quiet = false) => {
-    // A change event, the heartbeat and a tab focus can all land together, and
-    // one pass is fifteen requests against a database a round trip away. Without
-    // this guard they queue up behind the browser's per-host connection limit
-    // until fetches start timing out.
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
     if (!quiet) setIsRefreshing(true);
     try {
-      const res = await fetchDashboardData();
+      // A change event, the heartbeat and a Refresh click can all land
+      // together, and one pass is sixteen requests against a database a round
+      // trip away - left alone they queue behind the browser's per-host
+      // connection limit until fetches time out. So concurrent callers JOIN the
+      // run already in flight rather than starting another.
+      //
+      // Joining, not dropping: an earlier version returned early here, which
+      // meant a Refresh clicked while the background heartbeat happened to be
+      // running did nothing at all - no spinner, no result, no message.
+      if (!inFlightRef.current) {
+        inFlightRef.current = (async () => {
+          try {
+            setLoaded(0);
+            return await fetchDashboardData(n => setLoaded(n));
+          } finally {
+            inFlightRef.current = null;
+          }
+        })();
+      }
+      const res = await inFlightRef.current;
       setData(res);
       hasLoadedRef.current = true;
       setError(null);
@@ -78,9 +147,8 @@ export default function App() {
       if (!hasLoadedRef.current) setError(err.message || 'Failed to connect to CRM API');
       addToast(`Refresh failed: ${err.message}`, { bad: true });
     } finally {
-      inFlightRef.current = false;
       setLoading(false);
-      setIsRefreshing(false);
+      if (!quiet) setIsRefreshing(false);
     }
   }, [addToast]);
 
@@ -97,6 +165,38 @@ export default function App() {
 
     return cleanup;
   }, [loadData]);
+
+  // Which act is on screen, so the rail can mark it.
+  //
+  // This reads positions on scroll rather than using an IntersectionObserver:
+  // the seams are thin, so an observer band narrow enough to mean "at the top"
+  // is one a 40px seam can cross between frames, and the marker never moved off
+  // the first section. Reading which seam was the last to pass the line is
+  // exact, and a rAF gate keeps it to one measurement per painted frame.
+  const [activeSection, setActiveSection] = useState(SECTIONS[0].id);
+  useEffect(() => {
+    if (!data) return undefined;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const line = 160;
+      let current = SECTIONS[0].id;
+      SECTIONS.forEach(({ id }) => {
+        const el = document.getElementById(id);
+        if (el && el.getBoundingClientRect().top <= line) current = id;
+      });
+      setActiveSection(current);
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [data]);
 
   // Handle active period change
   const handlePeriodChange = async (newPeriod) => {
@@ -115,27 +215,7 @@ export default function App() {
   };
 
   if (loading && !data) {
-    return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '70vh',
-        gap: '12px',
-        color: 'var(--ink-muted)',
-      }}>
-        <div style={{
-          width: '36px',
-          height: '36px',
-          border: '3px solid var(--s1)',
-          borderTopColor: 'transparent',
-          borderRadius: '50%',
-          animation: 'spin 0.8s linear infinite',
-        }} />
-        <div style={{ fontWeight: '600', fontSize: '15px' }}>Loading Volkswagen Elite Motors Dashboard...</div>
-      </div>
-    );
+    return <Loading done={loaded} total={DASHBOARD_CALLS} />;
   }
 
   if (error && !data) {
@@ -152,44 +232,53 @@ export default function App() {
 
   const activePeriodObj = data?.periods?.find(p => p.is_active) || data?.periods?.[0] || {};
 
+  const seam = id => SECTIONS.find(x => x.id === id) || {};
+
   return (
-    <div className="wrap">
-      <Header
+    <div className="shell">
+      <Rail
         periods={data?.periods || []}
         activePeriod={activePeriodObj.label || ''}
         onPeriodChange={handlePeriodChange}
         liveStatus={liveStatus}
+        sections={SECTIONS}
+        activeSection={activeSection}
+        onOpenDrawer={handleOpenDrawer}
+        onOpenUpload={() => setUploadModalOpen(true)}
+        onOpenExport={() => setExportModalOpen(true)}
+        onRefresh={() => {
+          addToast('Pulling the latest figures…');
+          loadData();
+        }}
+        isRefreshing={isRefreshing}
         showTables={showTables}
         onToggleTables={() => setShowTables(prev => !prev)}
+        onManagePeriods={() => setPeriodsOpen(true)}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
 
-      {/* Way 1 Action Bar */}
-      <Way1ActionBar
-        onOpenDrawer={handleOpenDrawer}
-        onOpenUpload={() => setUploadModalOpen(true)}
-        onRefresh={() => {
-          addToast('Pulling live updates from Supabase...');
-          loadData();
-        }}
-        isRefreshing={isRefreshing}
-      />
+      <main className="sheet">
+        <div id="month" style={{ scrollMarginTop: '24px' }}>
+          <HeroMetric kpi={data?.kpi || {}} />
+          <KpiTiles kpi={data?.kpi || {}} trends={data?.trends || {}} />
+        </div>
 
-      {/* Main KPI Hero & Tiles */}
-      <HeroMetric kpi={data?.kpi || {}} />
-      <KpiTiles kpi={data?.kpi || {}} />
+        <Seam {...seam('sources')} />
 
-      {/* Visualizations */}
       <Visualizations sources={data?.sources || []} models={data?.models || []} />
 
-      {/* Funnel & Leaderboard Grid */}
       <div className="grid-2">
         <SalesFunnel funnel={data?.funnel || {}} />
         <Leaderboard board={data?.board || []} />
       </div>
 
-      {/* Pace, ageing, conversion, backorders, attachments, data quality */}
+        <Seam {...seam('running')} />
+
+        <div style={{ marginBottom: 26 }}>
+          <SalesTimeline refreshKey={data?.kpi?.bookings} />
+        </div>
+
       <Analytics
         orderbook={data?.orderbook || []}
         commitments={data?.commitments || []}
@@ -201,14 +290,14 @@ export default function App() {
         kpi={data?.kpi || {}}
       />
 
-      {/* Models & Inventory Ageing */}
+        <Seam {...seam('floor')} />
+
       <StockAndModels
         models={data?.models || []}
         ageing={data?.ageing || []}
         activity={data?.activity || []}
       />
 
-      {/* Optional Full Data Tables View */}
       {showTables && (
         <DataTables
           orderbook={data?.orderbook || []}
@@ -217,22 +306,47 @@ export default function App() {
         />
       )}
 
-      {/* Dealership Dual-Channel Footer */}
+      {/* Two ways in. Kept because it is genuinely useful to whoever is on the
+          floor - rewritten because the old copy was one long sentence naming the
+          database vendor twice. */}
       <footer style={{
-        marginTop: '40px',
-        paddingTop: '20px',
+        marginTop: '56px',
+        paddingTop: '22px',
         borderTop: '1px solid var(--grid)',
         fontSize: '12px',
         color: 'var(--ink-muted)',
-        lineHeight: '1.6',
+        lineHeight: '1.7',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
+        gap: '8px 36px',
       }}>
-        <b>Dual Database Update Channels</b> &mdash;{' '}
-        <b>Way 1:</b> Built-in Web Dashboard forms (+ New Booking, + New Lead, + Test Drive, + Allotment / Delivery, Upload Excel) save straight into your Supabase database in the cloud.{' '}
-        &bull;{' '}
-        <b>Way 2:</b> Direct cloud editing via Supabase Studio (Table Editor: insert row or edit cells). All changes immediately sync and recalculate dashboard figures in real time.
-      </footer>
+        <div>
+          <b style={{ color: 'var(--ink-2)' }}>Recording from here</b><br />
+          The rail on the left writes a booking, lead, test drive or allotment
+          straight into the shared record.
+        </div>
+        <div>
+          <b style={{ color: 'var(--ink-2)' }}>Recording from the workbook</b><br />
+          Upload a DSR file, or edit the tables in the cloud console. Either way
+          this sheet redraws on its own.
+        </div>
+        <div style={{ gridColumn: '1 / -1', paddingTop: '6px' }}>
+          Volkswagen Elite Motors &middot; Hosur Road, Bengaluru
+        </div>
+        </footer>
+      </main>
 
-      {/* Slide-out Entry Drawer */}
+      {/* Overlays sit outside the sheet so the rail cannot clip them. */}
+      <PeriodManager
+        isOpen={periodsOpen}
+        periods={data?.periods || []}
+        onClose={() => setPeriodsOpen(false)}
+        onChanged={(msg) => {
+          addToast(msg);
+          loadData(true);
+        }}
+      />
+
       <EntryDrawer
         isOpen={drawerOpen}
         activeTab={drawerTab}
@@ -253,6 +367,14 @@ export default function App() {
           addToast(msg);
           loadData(true);
         }}
+      />
+
+      {/* The way back out: the live tables as a workbook or a CSV set. An
+          export only reads, so there is nothing to reload afterwards. */}
+      <ExportDataModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onExported={(msg) => addToast(msg)}
       />
 
       {/* Toasts */}

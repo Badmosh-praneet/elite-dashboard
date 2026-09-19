@@ -147,7 +147,13 @@ function BookingPace({ orderbook = [], target = 0 }) {
             content={props => <Tip {...props} title={`Day ${props.label}`} />}
             cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }}
           />
-          <Legend {...LEGEND} />
+          <Legend
+            {...LEGEND}
+            content={<OrderedLegend items={[
+              { label: 'Booked', color: 'var(--viz-1)' },
+              { label: 'Target pace', color: 'var(--viz-2)' },
+            ]} />}
+          />
           <Line
             type="monotone" dataKey="Target pace" stroke="var(--viz-2)"
             strokeWidth={2} strokeDasharray="5 4" dot={false} />
@@ -192,12 +198,21 @@ function Commitments({ commitments = [] }) {
           <YAxis axisLine={false} tickLine={false} tick={AXIS} />
           <RechartsTooltip content={props => <Tip {...props} />}
                            cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
-          <Legend {...LEGEND} />
-          <Bar dataKey="Committed" fill="var(--viz-1)" radius={[4, 4, 0, 0]}>
+          {/* Same reason as the ageing ramp: Recharts sorts the key
+              alphabetically, so it read "Achieved, Committed" while the bars
+              drew committed first. */}
+          <Legend
+            {...LEGEND}
+            content={<OrderedLegend items={[
+              { label: 'Committed', color: 'var(--viz-1)' },
+              { label: 'Achieved', color: 'var(--viz-2)' },
+            ]} />}
+          />
+          <Bar dataKey="Committed" fill="var(--viz-1)" radius={[3, 3, 0, 0]}>
             <LabelList dataKey="Committed" position="top"
                        style={{ fill: 'var(--ink-muted)', fontSize: 11 }} />
           </Bar>
-          <Bar dataKey="Achieved" fill="var(--viz-2)" radius={[4, 4, 0, 0]}>
+          <Bar dataKey="Achieved" fill="var(--viz-2)" radius={[3, 3, 0, 0]}>
             <LabelList dataKey="Achieved" position="top"
                        style={{ fill: 'var(--ink-muted)', fontSize: 11 }} />
           </Bar>
@@ -275,37 +290,69 @@ function StockAgeing({ ageing = [] }) {
 /* ---- 4. Backorders: who has waited longest, and is there a car for them ---- */
 
 function Backorders({ backorders = [] }) {
-  const data = [...backorders]
+  // The panel used to plot all 21 rows, but ten of them are carry-over from
+  // earlier months sitting at ~500 days. They set the scale, so this month's
+  // orders - the ones anyone can still act on - were drawn as stubs, and the
+  // count disagreed with the Backorders tile, which counts the current period
+  // only. Current month leads; the rest is stated, not plotted.
+  const current = backorders.filter(b => b.is_current_period);
+  const carried = backorders.filter(b => !b.is_current_period);
+
+  const data = [...current]
     .sort((a, b) => num(b.days_waiting) - num(a.days_waiting))
     .slice(0, 10)
     .map(b => ({
-      who: `${b.customer_name || 'Unknown'} · ${b.model_family || b.model || ''}`.trim(),
+      who: b.customer_name || 'Unknown',
+      model: b.model_family || b.model || '',
       Waiting: num(b.days_waiting),
       matched: num(b.matching_free_units) > 0,
     }));
 
+  const matchedCount = current.filter(b => num(b.matching_free_units) > 0).length;
+  const sub = [
+    `${current.length} waiting this month`,
+    matchedCount ? `${matchedCount} already has a matching free car` : null,
+    carried.length ? `${carried.length} carried over from earlier months` : null,
+  ].filter(Boolean).join(' · ');
+
   return (
     <Panel
-      title="Longest-Waiting Backorders"
-      sub="Days since booking · amber marks an order with a matching free car"
+      title="Backorders Awaiting Stock"
+      sub={sub}
       empty={!data.length}
       height={340}
     >
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} layout="vertical"
-                  margin={{ top: 4, right: 44, left: 4, bottom: 0 }} barSize={18}>
+                  margin={{ top: 4, right: 52, left: 4, bottom: 0 }} barSize={18}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" horizontal={false} />
-          <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS} />
-          <YAxis type="category" dataKey="who" width={170} axisLine={false}
-                 tickLine={false} tick={{ ...AXIS, fontSize: 11 }} />
-          <RechartsTooltip content={props => <Tip {...props} suffix=" days" />}
-                           cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
-          <Bar dataKey="Waiting" name="Days waiting" radius={[0, 4, 4, 0]}>
+          <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
+                 tickFormatter={v => `${v}d`} />
+          <YAxis type="category" dataKey="who" width={132} axisLine={false}
+                 tickLine={false} tick={{ ...AXIS, fontSize: 11 }} interval={0} />
+          <RechartsTooltip
+            content={props => {
+              const p = props.payload && props.payload[0];
+              return (
+                <Tip
+                  {...props}
+                  suffix=" days"
+                  title={p ? `${p.payload.who} · ${p.payload.model}` : props.label}
+                />
+              );
+            }}
+            cursor={{ fill: 'var(--grid)', opacity: 0.4 }}
+          />
+          <Bar dataKey="Waiting" name="Days waiting" radius={[0, 3, 3, 0]}>
             {data.map((d, i) => (
               <Cell key={i} fill={d.matched ? 'var(--warning)' : 'var(--viz-1)'} />
             ))}
-            <LabelList dataKey="Waiting" position="right"
-                       style={{ fill: 'var(--ink-muted)', fontSize: 11 }} />
+            <LabelList
+              dataKey="Waiting"
+              position="right"
+              formatter={v => `${v}d`}
+              style={{ fill: 'var(--ink-muted)', fontSize: 11 }}
+            />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -340,13 +387,19 @@ function ConsultantConversion({ scorecards = [] }) {
           <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" horizontal={false} />
           <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
                  tickFormatter={v => `${v}%`} />
-          <YAxis type="category" dataKey="consultant" width={120} axisLine={false}
-                 tickLine={false} tick={{ ...AXIS, fontSize: 11 }} />
+          <YAxis type="category" dataKey="consultant" width={128} axisLine={false}
+                 tickLine={false} tick={{ ...AXIS, fontSize: 11 }} interval={0} />
           <RechartsTooltip content={props => <Tip {...props} suffix="%" />}
                            cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
-          <Legend {...LEGEND} />
-          <Bar dataKey="Test drive %" fill="var(--viz-1)" radius={[0, 4, 4, 0]} />
-          <Bar dataKey="Booking %" fill="var(--viz-2)" radius={[0, 4, 4, 0]} />
+          <Legend
+            {...LEGEND}
+            content={<OrderedLegend items={[
+              { label: 'Test drive %', color: 'var(--viz-1)' },
+              { label: 'Booking %', color: 'var(--viz-2)' },
+            ]} />}
+          />
+          <Bar dataKey="Test drive %" fill="var(--viz-1)" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="Booking %" fill="var(--viz-2)" radius={[0, 3, 3, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </Panel>
@@ -404,11 +457,40 @@ function Attachments({ attachments }) {
 
 /* ---- 7. Data quality: qualitative -> a list, with icon + label, not hue alone ---- */
 
-const SEVERITY = {
-  high: { color: 'var(--critical)', icon: '▲', label: 'High' },
-  medium: { color: 'var(--warning)', icon: '◆', label: 'Medium' },
-  low: { color: 'var(--ink-muted)', icon: '●', label: 'Low' },
-};
+/* Stroke marks on a 14px grid, drawn rather than typed: a dingbat glyph
+   renders in whatever face the OS substitutes and never matches the page. */
+function SeverityMark({ severity }) {
+  const color = severity === 'high' ? 'var(--critical)'
+    : severity === 'medium' ? 'var(--warning)' : 'var(--ink-muted)';
+  const common = {
+    width: 14, height: 14, viewBox: '0 0 14 14', fill: 'none',
+    stroke: color, strokeWidth: 1.4, strokeLinecap: 'round',
+    strokeLinejoin: 'round', style: { flex: 'none' },
+  };
+  if (severity === 'high') {
+    return (
+      <svg {...common} aria-hidden="true">
+        <path d="M7 1.9 12.6 11.8H1.4z" />
+        <path d="M7 5.9v2.4" />
+        <path d="M7 10.1h.01" />
+      </svg>
+    );
+  }
+  if (severity === 'medium') {
+    return (
+      <svg {...common} aria-hidden="true">
+        <path d="M7 1.8 12.2 7 7 12.2 1.8 7z" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common} aria-hidden="true">
+      <circle cx="7" cy="7" r="4.6" />
+    </svg>
+  );
+}
+
+const SEVERITY_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
 
 function DataQuality({ issues = [] }) {
   const order = { high: 0, medium: 1, low: 2 };
@@ -424,14 +506,14 @@ function DataQuality({ issues = [] }) {
     >
       <div style={{ overflowY: 'auto', height: '100%', paddingRight: 4 }}>
         {rows.map((r, i) => {
-          const s = SEVERITY[r.severity] || SEVERITY.low;
+          const sev = SEVERITY_LABEL[r.severity] ? r.severity : 'low';
           return (
             <div key={i} style={{
               padding: '10px 0',
               borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--grid)',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                <span style={{ color: s.color, fontSize: 11 }}>{s.icon}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
+                <SeverityMark severity={sev} />
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
                   {r.issue}
                 </span>
@@ -439,11 +521,11 @@ function DataQuality({ issues = [] }) {
                   marginLeft: 'auto', fontSize: 11, color: 'var(--ink-muted)',
                   whiteSpace: 'nowrap',
                 }}>
-                  {s.label} · {n0(r.affected_rows)} rows
+                  {SEVERITY_LABEL[sev]} · {n0(r.affected_rows)} rows
                 </span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--ink-muted)', lineHeight: 1.5,
-                            paddingLeft: 19 }}>
+                            paddingLeft: 23 }}>
                 {r.detail}
               </div>
             </div>

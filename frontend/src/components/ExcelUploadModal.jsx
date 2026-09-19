@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, UploadCloud, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import { uploadReportFile } from '../api/client';
+import { uploadReportFile, n0 } from '../api/client';
 
 export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) {
   const [file, setFile] = useState(null);
@@ -11,6 +11,26 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  // What the month being uploaded into currently holds. An upload REPLACES that
+  // month rather than adding to it, which is the right behaviour but invisible
+  // -- so the modal says it, with the real figures, before anyone commits.
+  const [replacing, setReplacing] = useState(null);
+
+  useEffect(() => {
+    const label = period.trim();
+    if (!label) { setReplacing(null); return undefined; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/periods/${encodeURIComponent(label)}/contents`);
+        if (cancelled) return;
+        setReplacing(res.ok ? await res.json() : { missing: true, label });
+      } catch {
+        if (!cancelled) setReplacing(null);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [period]);
   const fileInputRef = useRef(null);
 
   if (!isOpen) return null;
@@ -61,7 +81,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
     try {
       const data = await uploadReportFile(file, period, uploader, tableType);
       setResult(data);
-      onUploadComplete(`Ingested '${data.filename}' into Supabase for ${data.period}!`, data);
+      onUploadComplete(`${data.period} replaced from '${data.filename}'`, data);
     } catch (err) {
       setError(err.message || 'Ingestion failed');
     } finally {
@@ -80,6 +100,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
         borderRadius: 'var(--radius-lg)',
         maxWidth: '540px',
         width: '100%',
+        maxHeight: '90vh',
         boxShadow: 'var(--shadow-lg)',
         overflow: 'hidden',
         display: 'flex',
@@ -94,9 +115,9 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           alignItems: 'center',
         }}>
           <div>
-            <h2 style={{ fontSize: '16px', fontWeight: '700' }}>📥 Ingest DSR Report (Excel, CSV, TXT)</h2>
+            <h2 style={{ fontSize: '16px' }}>Ingest DSR Report</h2>
             <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--ink-muted)' }}>
-              Bulk-loads bookings, vehicle stock, enquiries, and targets into Supabase.
+              Loads bookings, stock, enquiries and targets for one month. Uploading replaces that month.
             </p>
           </div>
           <button onClick={onClose} style={{ padding: '6px', borderRadius: '50%' }}>
@@ -104,7 +125,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           </button>
         </div>
 
-        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
           {/* Dropzone */}
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -171,10 +192,45 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               <input
                 value={period}
                 onChange={e => setPeriod(e.target.value)}
-                placeholder="Auto-detect (e.g. AUG2026, SEP2026)"
+                placeholder="e.g. AUG2026"
               />
             </label>
           </div>
+
+          {replacing && (
+            <div style={{
+              border: '1px solid ' + (replacing.missing ? 'var(--grid)' : 'var(--warning)'),
+              background: replacing.missing ? 'var(--surface-sub)' : 'var(--critical-light)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '11px 14px',
+              fontSize: '12.5px',
+              lineHeight: 1.6,
+            }}>
+              {replacing.missing ? (
+                <>
+                  <b>{replacing.label}</b> is a new month. Nothing will be replaced.
+                </>
+              ) : (
+                <>
+                  This <b>replaces</b> everything currently in <b>{replacing.label}</b>
+                  {replacing.total > 0
+                    ? <> &mdash; {n0(replacing.total)} rows
+                        {replacing.counts && Object.keys(replacing.counts).length > 0 && (
+                          <> ({Object.entries(replacing.counts)
+                              .map(([k, v]) => `${n0(v)} ${k.replace(/_/g, ' ')}`)
+                              .join(', ')})</>
+                        )}. It is not added alongside.</>
+                    : <>, which is currently empty.</>}
+                  {replacing.hand_entered > 0 && (
+                    <div style={{ color: 'var(--critical)', marginTop: 6 }}>
+                      {n0(replacing.hand_entered)} of those were entered by hand on the dashboard
+                      and will also be replaced.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <label className="field" style={{ margin: 0 }}>
             <span>Uploaded By</span>
@@ -233,10 +289,14 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                 <CheckCircle2 size={16} />
                 <span>Successfully Ingested {result.filename} ({result.period})!</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
                 {Object.entries(result.counts || {}).map(([tbl, cnt]) => (
-                  <div key={tbl} style={{ background: 'var(--surface)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border)' }}>
-                    <b>{cnt}</b> <span style={{ color: 'var(--ink-muted)' }}>{tbl}s</span>
+                  <div key={tbl} style={{ 
+                    background: 'var(--surface)', padding: '6px 10px', borderRadius: '4px', 
+                    border: '1px solid var(--border)', wordBreak: 'break-word', lineHeight: '1.4'
+                  }}>
+                    <b style={{ display: 'block', fontSize: '14px', marginBottom: '2px' }}>{cnt}</b> 
+                    <span style={{ color: 'var(--ink-muted)', fontSize: '11px', textTransform: 'uppercase' }}>{tbl}</span>
                   </div>
                 ))}
               </div>

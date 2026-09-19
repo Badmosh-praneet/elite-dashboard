@@ -187,10 +187,12 @@ def activate_period(cx, label: str) -> dict:
     cx.execute("UPDATE dim_period SET is_active = true WHERE period_id = %s",
                (period_id,))
 
+    print("ACTIVATE PERIOD:", label, "GOT PERIOD_ID:", period_id)
     touched = {}
     for table in ("lead", "booking"):
+        print("UPDATING", table, "WITH", period_id)
         touched[table] = cx.execute(
-            f"UPDATE {table} SET is_current_period = (period_id = %s) "
-            f"WHERE is_current_period <> (period_id IS NOT DISTINCT FROM %s)",
+            f"UPDATE {table} SET is_current_period = (COALESCE(period_id, -1) = %s) "
+            f"WHERE is_current_period != (COALESCE(period_id, -1) = %s)",
             (period_id, period_id)).rowcount
     return {"period": label, "period_id": period_id, "rows_realigned": touched}

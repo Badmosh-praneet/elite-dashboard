@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -24,8 +25,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import fallback
-from .db import is_db_ready, fetch_all, fetch_one, filtered, pool
+from .db import is_db_ready, fetch_all, fetch_one, filtered, pool, session
 from .entry import router as entry_router
+from .crm_api import router as crm_router
+from .export import router as export_router
 from .events import broker
 
 log = logging.getLogger("dsr.main")
@@ -87,11 +90,124 @@ app = FastAPI(
 
 # Everything that writes, plus the change stream.
 app.include_router(entry_router)
+app.include_router(crm_router)
+# And the way back out: the live tables as an Excel workbook or a CSV set.
+app.include_router(export_router)
 
 
 # =====================================================================
 # Dashboard data
 # =====================================================================
+
+# The whole dashboard, assembled inside one statement.
+#
+# Profiling said the SQL is free and the network is everything: against this
+# database every query costs the same as SELECT 1 (~360 ms), because it is a
+# round trip to Sydney. Sixteen endpoints, each taking its own pooled
+# connection, spent ~5.2 s wall-clock to move 50 KB. Postgres will build all of
+# it as JSON in a single statement, so the page now costs one round trip
+# instead of sixteen checkouts.
+_DASHBOARD_BUNDLE = """
+SELECT
+  (SELECT row_to_json(x) FROM v_daily_kpi x)                                        AS kpi,
+  (SELECT row_to_json(x) FROM v_sales_funnel x)                                     AS funnel_raw,
+  (SELECT row_to_json(x) FROM (SELECT * FROM v_consultant_scorecard
+      WHERE row_kind = 'GRAND_TOTAL' LIMIT 1) x)                                    AS targets,
+  (SELECT json_agg(x) FROM v_consultant_leaderboard x)                              AS board,
+  (SELECT json_agg(x) FROM (SELECT * FROM v_leads_sourcewise ORDER BY leads DESC) x)        AS sources,
+  (SELECT json_agg(x) FROM (SELECT * FROM v_model_position ORDER BY total_stock DESC, model) x) AS models,
+  (SELECT json_agg(x) FROM (
+        SELECT COALESCE(m.family, a.model) AS model, a.ageing_bucket,
+               sum(a.units)::int AS units,
+               round(sum(a.avg_days * a.units) / NULLIF(sum(a.units), 0), 1) AS avg_days,
+               max(a.max_days) AS max_days
+        FROM v_stock_ageing a LEFT JOIN dim_model m ON m.name = a.model
+        GROUP BY 1, 2 ORDER BY 1, 2) x)                                             AS ageing,
+  (SELECT json_agg(x) FROM (SELECT * FROM v_backorders
+        ORDER BY is_current_period DESC, days_waiting DESC NULLS LAST) x)           AS backorders,
+  (SELECT json_agg(x) FROM v_consultant_scorecard x)                                AS scorecards,
+  (SELECT json_agg(x) FROM (SELECT * FROM v_booking_commitments
+        ORDER BY consultant_label, window_label) x)                                 AS commitments,
+  (SELECT row_to_json(x) FROM v_attachment_rates x)                                 AS attachments,
+  (SELECT json_agg(x) FROM v_data_quality x)                                        AS "dataQuality",
+  (SELECT json_agg(x) FROM (SELECT * FROM v_bookings WHERE is_current_period
+        ORDER BY booking_date DESC NULLS LAST LIMIT 1000) x)                        AS orderbook,
+  (SELECT json_agg(x) FROM (
+        SELECT p.label, p.period_start, p.period_end, p.is_active,
+               (SELECT count(*) FROM lead    l WHERE l.period_id = p.period_id) AS leads,
+               (SELECT count(*) FROM booking b WHERE b.period_id = p.period_id) AS bookings
+        FROM dim_period p ORDER BY p.period_start DESC) x)                          AS periods,
+  (SELECT json_build_object(
+        'enquiries', (SELECT json_agg(t) FROM (
+            SELECT d::date::text AS d,
+                   (SELECT count(*) FROM lead l WHERE l.is_current_period
+                      AND l.created_at::date = d::date) AS n
+            FROM generate_series((SELECT period_start FROM dim_period WHERE is_active),
+                                 (SELECT period_end   FROM dim_period WHERE is_active),
+                                 interval '1 day') d) t),
+        'bookings', (SELECT json_agg(t) FROM (
+            SELECT d::date::text AS d,
+                   (SELECT count(*) FROM booking b WHERE b.is_current_period
+                      AND b.booking_date = d::date) AS n
+            FROM generate_series((SELECT period_start FROM dim_period WHERE is_active),
+                                 (SELECT period_end   FROM dim_period WHERE is_active),
+                                 interval '1 day') d) t)))                          AS trends,
+  (SELECT json_build_object(
+        'consultants', (SELECT json_agg(display_name ORDER BY display_name)
+                          FROM dim_consultant WHERE is_active),
+        'sources',     (SELECT json_agg(name ORDER BY name) FROM dim_lead_source),
+        'models',      (SELECT json_agg(name ORDER BY name) FROM dim_model),
+        'colours',     (SELECT json_agg(name ORDER BY name) FROM dim_colour),
+        'variants',    (SELECT json_agg(x) FROM (
+                          SELECT m.name AS model, v.name AS variant, v.long_model_text
+                          FROM dim_variant v JOIN dim_model m USING (model_id)
+                          ORDER BY m.name, v.name) x),
+        'fulfilment_statuses', json_build_array('BOOKED','NO_STOCK','ALLOTED','RETAILED','CANCELLED'),
+        'open_bookings', (SELECT json_agg(x) FROM (
+                          SELECT b.booking_id, b.customer_name, m.name AS model,
+                                 dv.name AS variant, c.display_name AS consultant
+                          FROM booking b
+                          LEFT JOIN dim_model m ON m.model_id = b.model_id
+                          LEFT JOIN dim_variant dv ON dv.variant_id = b.variant_id
+                          LEFT JOIN dim_consultant c ON c.consultant_id = b.consultant_id
+                          WHERE b.fulfilment_status IN ('BOOKED','NO_STOCK')
+                          ORDER BY b.booking_date DESC NULLS LAST LIMIT 200) x),
+        'free_chassis', (SELECT json_agg(x) FROM (
+                          SELECT chassis_number, model, variant, colour, stock_aging_days
+                          FROM v_stock WHERE stock_status = 'FREESTOCK'
+                          ORDER BY stock_aging_days DESC NULLS LAST) x)))            AS options
+"""
+
+
+@app.get("/api/dashboard", tags=["dashboard"])
+def dashboard_bundle():
+    """
+    Everything the dashboard draws, in one round trip.
+
+    The individual /api/* routes are unchanged - the agent surface and anything
+    else still uses them, and the front end falls back to them if this fails.
+    """
+    if not is_db_ready():
+        raise HTTPException(503, "The database is not reachable.")
+    with session() as cx:
+        row = cx.execute(_DASHBOARD_BUNDLE).fetchone()
+
+    stages = row.get("funnel_raw") or {}
+    targets = row.get("targets") or {}
+    out = {k: (v if v is not None else []) for k, v in row.items()
+           if k not in ("funnel_raw", "targets")}
+    out["funnel"] = {
+        "period": stages.get("period"),
+        "stages": [
+            {"stage": "Enquiries",   "value": stages.get("enquiries"),   "target": targets.get("leads_target")},
+            {"stage": "Qualified",   "value": stages.get("qualified"),   "target": None},
+            {"stage": "Test drives", "value": stages.get("test_drives"), "target": targets.get("td_target")},
+            {"stage": "Bookings",    "value": stages.get("bookings"),    "target": targets.get("booking_target")},
+            {"stage": "Retails",     "value": stages.get("retails"),     "target": targets.get("retail_target")},
+        ],
+    } if stages else {}
+    return out
+
 
 @app.get("/api/kpi", tags=["dashboard"])
 def kpi():
@@ -104,6 +220,155 @@ def kpi():
         except Exception:
             pass
     return fallback.get_kpi()
+
+
+@app.get("/api/kpi/trends", tags=["dashboard"])
+def kpi_trends():
+    """
+    Daily series behind the headline tiles, so a tile can show its shape and
+    not just its total.
+
+    Only two metrics have an honest daily series. Enquiries carry created_at and
+    bookings carry booking_date; registrations do not - delivery_date is blank
+    on every row of the Reg Report tab (see v_data_quality), so there is no
+    retail trend to draw and this returns none rather than inventing one.
+
+    Days with no activity are returned as zero rather than omitted, so the
+    sparkline keeps an even time axis instead of bunching the gaps up.
+    """
+    empty = {"enquiries": [], "bookings": [], "period": None}
+    if not is_db_ready():
+        return empty
+    try:
+        with session() as cx:
+            period = cx.execute(
+                "SELECT label, period_start, period_end FROM dim_period WHERE is_active"
+            ).fetchone()
+            if not period:
+                return empty
+
+            def series(sql: str) -> list[dict]:
+                rows = {r["d"]: r["n"] for r in cx.execute(sql).fetchall()}
+                out, day = [], period["period_start"]
+                while day <= period["period_end"]:
+                    out.append({"d": day.isoformat(), "n": rows.get(day, 0)})
+                    day += timedelta(days=1)
+                return out
+
+            return {
+                "enquiries": series(
+                    "SELECT created_at::date AS d, count(*) AS n FROM lead "
+                    "WHERE is_current_period AND created_at IS NOT NULL GROUP BY 1"),
+                "bookings": series(
+                    "SELECT booking_date AS d, count(*) AS n FROM booking "
+                    "WHERE is_current_period AND booking_date IS NOT NULL GROUP BY 1"),
+                "period": {
+                    "label": period["label"],
+                    "start": period["period_start"].isoformat(),
+                    "end": period["period_end"].isoformat(),
+                },
+            }
+    except Exception:
+        log.exception("kpi trends failed")
+        return empty
+
+
+@app.get("/api/sales/timeline", tags=["dashboard"])
+def sales_timeline(
+    grain: str = Query("day", pattern="^(day|week|month)$"),
+    period: str | None = Query(None, description="Month label; defaults to the active one"),
+):
+    """
+    Sales activity over time, at the grain the floor actually asks for.
+
+    day and week are read within one reporting month; month spans every month on
+    record, so the same endpoint answers "how did this week go" and "how do the
+    months compare".
+
+    Only bookings and enquiries are plotted. Retails would belong here too, but
+    the Reg Report tab leaves delivery, registration and invoice dates blank on
+    every row, so there is no date to put a retail on - see v_data_quality.
+    Test drives carry dates from a 2024 export, which is the same problem.
+    Buckets with no activity are returned as zero so the axis stays even.
+    """
+    empty = {"grain": grain, "period": None, "buckets": []}
+    if not is_db_ready():
+        return empty
+    try:
+        with session() as cx:
+            if grain == "month":
+                rows = cx.execute("""
+                    -- period_id, not load_period_id: a workbook also carries
+                    -- carry-over tabs (Pending, Live, Golf) which belong to
+                    -- earlier months. Counting those would make the month view
+                    -- disagree with the headline and with day/week, which read
+                    -- the current month only.
+                    SELECT p.label,
+                           p.period_start AS bucket,
+                           (SELECT count(*) FROM booking b
+                             WHERE b.period_id = p.period_id) AS bookings,
+                           (SELECT count(*) FROM lead l
+                             WHERE l.period_id = p.period_id) AS enquiries,
+                           (SELECT COALESCE(sum(b.booking_amount), 0) FROM booking b
+                             WHERE b.period_id = p.period_id) AS revenue
+                    FROM dim_period p
+                    ORDER BY p.period_start
+                """).fetchall()
+                return {
+                    "grain": "month",
+                    "period": None,
+                    "buckets": [{
+                        "key": r["label"],
+                        "label": r["label"],
+                        "bookings": r["bookings"],
+                        "enquiries": r["enquiries"],
+                        "revenue": float(r["revenue"] or 0),
+                    } for r in rows],
+                }
+
+            p = cx.execute(
+                "SELECT label, period_start, period_end FROM dim_period "
+                "WHERE upper(label) = upper(%s)" if period else
+                "SELECT label, period_start, period_end FROM dim_period WHERE is_active",
+                (period,) if period else ()).fetchone()
+            if not p:
+                return empty
+
+            step = "1 day" if grain == "day" else "1 week"
+            rows = cx.execute(f"""
+                WITH spine AS (
+                    SELECT generate_series(
+                        date_trunc('{grain}', %s::date),
+                        date_trunc('{grain}', %s::date),
+                        interval '{step}')::date AS bucket
+                )
+                SELECT s.bucket,
+                       (SELECT count(*) FROM booking b
+                         WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                           AND date_trunc('{grain}', b.booking_date) = s.bucket) AS bookings,
+                       (SELECT count(*) FROM lead l
+                         WHERE l.is_current_period AND l.created_at IS NOT NULL
+                           AND date_trunc('{grain}', l.created_at) = s.bucket) AS enquiries,
+                       (SELECT COALESCE(sum(b.booking_amount), 0) FROM booking b
+                         WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                           AND date_trunc('{grain}', b.booking_date) = s.bucket) AS revenue
+                FROM spine s ORDER BY s.bucket
+            """, (p["period_start"], p["period_end"])).fetchall()
+
+            return {
+                "grain": grain,
+                "period": p["label"],
+                "buckets": [{
+                    "key": r["bucket"].isoformat(),
+                    "label": r["bucket"].isoformat(),
+                    "bookings": r["bookings"],
+                    "enquiries": r["enquiries"],
+                    "revenue": float(r["revenue"] or 0),
+                } for r in rows],
+            }
+    except Exception:
+        log.exception("sales timeline failed")
+        return empty
 
 
 @app.get("/api/funnel", tags=["dashboard"])
@@ -192,13 +457,27 @@ def stock_availability():
 
 @app.get("/api/stock/ageing", tags=["dashboard"])
 def stock_ageing():
+    """
+    Ageing bands per model FAMILY.
+
+    v_stock_ageing keys on the model name, so TAIGUN and TAIGUN (FL) arrive as
+    two separate models while v_model_position - and every table on the page -
+    reports them as one TAIGUN of 47 units. Rolling up here keeps the two
+    panels telling the same story; avg_days is re-weighted by units rather
+    than averaged, or the smaller variant would count as much as the larger.
+    """
     if is_db_ready():
         try:
             res = fetch_all("""
-                SELECT * FROM v_stock_ageing
-                ORDER BY model,
-                         array_position(ARRAY['0-30','31-60','61-90','91-180','180+','unknown'],
-                                        ageing_bucket)
+                SELECT COALESCE(m.family, a.model) AS model,
+                       a.ageing_bucket,
+                       sum(a.units)::int AS units,
+                       round(sum(a.avg_days * a.units) / NULLIF(sum(a.units), 0), 1) AS avg_days,
+                       max(a.max_days) AS max_days
+                FROM v_stock_ageing a
+                LEFT JOIN dim_model m ON m.name = a.model
+                GROUP BY 1, 2
+                ORDER BY 1, 2
             """)
             if res:
                 return res
@@ -272,7 +551,13 @@ def backorders():
     """Orders with no car against them, longest wait first."""
     if is_db_ready():
         try:
-            res = fetch_all("SELECT * FROM v_backorders ORDER BY days_waiting DESC NULLS LAST")
+            # Sorted so the current month leads: the carry-over rows are all
+            # ~500 days old and would otherwise fill the whole panel and
+            # squash this month's orders - which are the ones still actionable.
+            res = fetch_all("""
+                SELECT * FROM v_backorders
+                ORDER BY is_current_period DESC, days_waiting DESC NULLS LAST
+            """)
             if res:
                 return res
         except Exception:

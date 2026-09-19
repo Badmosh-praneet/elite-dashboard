@@ -116,7 +116,7 @@ class Loader:
             for row in rows:
                 if row[dedup_idx] is None:
                     keyless.append(row)
-                else:
+                elif row[dedup_idx] not in seen:
                     seen[row[dedup_idx]] = row
             rows = list(seen.values()) + keyless
             
@@ -441,11 +441,10 @@ class Loader:
                 INSERT INTO booking (booking_date, contract_no, source_id,
                     consultant_id, customer_name, mobile, model_id, variant_id,
                     colour_id, model_year, long_model_text, fulfilment_status,
-                    car_origin, crm_entry_done, booking_amount,
-                    booking_amount_receipted, notes, source_sheet,
-                    period_id, is_current_period)
+                    car_origin, crm_entry_done, booking_amount, booking_amount_receipted,
+                    notes, source_sheet, period_id, is_current_period)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, rows_main)
+                """, rows_main, dedup_idx=4)
 
         rows_alloted = []
         for _, cell in self.rows("Booking & Alloted", 1, 11):
@@ -469,7 +468,51 @@ class Loader:
                     fulfilment_status, ageing_days, vehicle_id, source_sheet,
                     period_id, is_current_period)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, rows_alloted)
+                """, rows_alloted, dedup_idx=4)
+                
+        # Deduplicate bookings: the same customer can appear on several tabs
+        # (Live vs Alloted), so the older row is merged into the newer one and
+        # then removed.
+        #
+        # Both statements are confined to rows THIS run inserted. They used to
+        # match on customer name across the whole table, so loading a second
+        # month deleted the first month's bookings for every name the two
+        # workbooks had in common - which is how an October test emptied
+        # August. reset() has already cleared this period's previous rows, so
+        # "load_period_id IS NULL" is exactly this load's output; stamp_load()
+        # claims them at the end of run().
+        self.cx.execute("""
+            UPDATE booking b1 
+            SET 
+                is_current_period = b1.is_current_period OR b2.is_current_period,
+                -- period_id has to come across too. The survivor is the row with
+                -- the higher id (Booking & Alloted), which carries no period,
+                -- while the row being merged away is the Current Month Booking
+                -- entry that does. Without this the merged booking ends up with
+                -- period_id NULL, activate_period then recomputes
+                -- is_current_period from that NULL, and the month reports zero
+                -- bookings against a full order book.
+                period_id = COALESCE(b1.period_id, b2.period_id),
+                contract_no = COALESCE(b1.contract_no, b2.contract_no),
+                source_id = COALESCE(b1.source_id, b2.source_id),
+                mobile = COALESCE(b1.mobile, b2.mobile),
+                long_model_text = COALESCE(b1.long_model_text, b2.long_model_text),
+                car_origin = COALESCE(b1.car_origin, b2.car_origin),
+                crm_entry_done = COALESCE(b1.crm_entry_done, b2.crm_entry_done),
+                booking_amount = COALESCE(b1.booking_amount, b2.booking_amount),
+                booking_amount_receipted = COALESCE(b1.booking_amount_receipted, b2.booking_amount_receipted),
+                notes = COALESCE(b1.notes, b2.notes)
+            FROM booking b2
+            WHERE upper(b1.customer_name) = upper(b2.customer_name)
+              AND b1.booking_id > b2.booking_id
+              AND b1.load_period_id IS NULL AND b2.load_period_id IS NULL;
+
+            DELETE FROM booking a USING booking b
+            WHERE upper(a.customer_name) = upper(b.customer_name)
+              AND a.booking_id < b.booking_id
+              AND a.load_period_id IS NULL AND b.load_period_id IS NULL
+        """)
+        
         self.counts["booking"] = self.one("SELECT count(*) FROM booking")
 
     def load_allotments(self):
@@ -740,25 +783,50 @@ class Loader:
 
     def reset(self):
         """
-        Clear what this load is about to rebuild - and nothing else.
+        Clear what THIS load is about to rebuild - this period, and nothing else.
 
-        A reload used to truncate every table, which would now throw away the
-        dealership's own work: bookings, enquiries and test drives entered
-        through the dashboard carry origin = 'MANUAL' and have to survive a
-        refresh of the workbook. Only WORKBOOK rows are removed.
+        Two things used to go wrong here. `test_drive`, `allotment` and
+        `registration` carry no period, so they were cleared with a bare
+        `WHERE origin = 'WORKBOOK'` - every month's rows, on every load. And
+        booking/lead swept `period_id IS NULL` too, which is where the
+        carry-over tabs live, so one month's upload took another month's
+        carry-over with it. Loading an October file therefore emptied August.
+
+        Every row now records the period whose load produced it in
+        `load_period_id`, independently of the business `period_id` the views
+        filter on, so a reload can delete exactly its own previous output.
+        Rows the dealership typed in (origin = 'MANUAL') are never touched.
         """
         for table in WORKBOOK_FACTS:
             deleted = self.cx.execute(
-                f"DELETE FROM {table} WHERE origin = 'WORKBOOK'").rowcount
+                f"DELETE FROM {table} "
+                f"WHERE origin = 'WORKBOOK' AND load_period_id = %s",
+                (self.period_id,)).rowcount
             if deleted:
                 self.counts[f"{table}_replaced"] = deleted
+
         for table in PERIOD_TARGETS:
             self.cx.execute(f"DELETE FROM {table} WHERE period_id = %s",
                             (self.period_id,))
+
         kept = self.one("SELECT count(*) FROM booking WHERE origin = 'MANUAL'")
         if kept:
             self.warnings.append(
                 f"kept {kept} manually entered booking(s) through the reload")
+
+    def stamp_load(self):
+        """
+        Mark everything this run just wrote with the period that wrote it.
+
+        Done once at the end rather than threaded through every INSERT: the
+        fact loaders each build their own column lists, and adding one more to
+        five of them is five more places for the next person to forget.
+        """
+        for table in WORKBOOK_FACTS:
+            self.cx.execute(
+                f"UPDATE {table} SET load_period_id = %s "
+                f"WHERE origin = 'WORKBOOK' AND load_period_id IS NULL",
+                (self.period_id,))
 
     def run(self):
         self.cx.execute("SET search_path = dsr, public")
@@ -776,6 +844,12 @@ class Loader:
         self.load_booking_commitments()
         self.load_daily_tracker()
         self.link_bookings_to_vehicles()
+        self.stamp_load()
+        # load_period() flips dim_period.is_active, but the fact tables carry
+        # their own is_current_period flag and every headline view filters on
+        # it. Without this the previous month stays flagged current alongside
+        # the new one and the dashboard reports the two added together.
+        dims.activate_period(self.cx, self.period_label)
         # Reference-table sizes are worth reporting too - they show whether a new
         # trim or a new joiner turned up in this workbook.
         for table in ("dim_consultant", "dim_model", "dim_variant", "dim_colour",

@@ -38,6 +38,15 @@ from .write import (AllotmentIn, BookingIn, BookingPatch, LeadIn, RegistrationIn
 log = logging.getLogger("dsr.entry")
 router = APIRouter()
 
+# Everything a reporting month owns. Facts are keyed by the load that produced
+# them (load_period_id); lead and booking additionally carry a business
+# period_id, which is where hand-entered rows are attached.
+PERIOD_FACTS = ["registration", "allotment", "booking", "test_drive", "lead"]
+PERIOD_TARGET_TABLES = [
+    "target_daily_tracker", "target_booking_commitment",
+    "target_channel_funnel", "target_consultant_scorecard",
+]
+
 MONTH_MAP = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
     "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
@@ -47,22 +56,46 @@ MONTH_MAP = {
 
 
 def _resolve_period(period: str | None, filename: str) -> tuple[str, date, date]:
-    """Determine (period_label, start_date, end_date) from explicit string or filename."""
-    text = f"{period or ''} {filename}".lower()
-    month = 8  # default August
-    year = 2026
+    """
+    Work out which month a report is for - or refuse to guess.
 
-    for name, num in MONTH_MAP.items():
-        if re.search(r"\b" + name, text):
-            month = num
-            break
+    This used to default to August 2026 whenever it could not tell. A file
+    called "Test DSR.xlsx" therefore loaded silently into AUG2026 and replaced
+    that month's bookings, test drives, allotments and registrations. Getting
+    this wrong destroys a month of data, so an unanswerable case is now an
+    error the uploader can act on rather than a guess nobody sees.
+    """
+    month = year = None
 
-    ym = re.search(r"(202\d)", text)
-    if ym:
-        year = int(ym.group(1))
+    # An explicit label is the most reliable signal, and it is the one form the
+    # scan below cannot read: in "OCT2026" the year is glued to the month, so
+    # there is no word boundary for \b(20\d\d)\b to find.
+    tag = re.match(r"^\s*([a-z]{3,9})\s*[-_ ]?\s*(20\d\d)\s*$", (period or "").lower())
+    if tag and tag.group(1) in MONTH_MAP:
+        month, year = MONTH_MAP[tag.group(1)], int(tag.group(2))
+    else:
+        text = f"{period or ''} {filename}".lower()
+        for name, num in MONTH_MAP.items():
+            if re.search(r"\b" + name, text):
+                month = num
+                break
+        ym = re.search(r"\b(20\d\d)\b", text)
+        year = int(ym.group(1)) if ym else None
+
+    if month is None or year is None:
+        missing = "month" if month is None else "year"
+        raise HTTPException(
+            400,
+            f"Could not tell which {missing} this report covers, and guessing would "
+            f"overwrite whichever month it guessed. Set the period explicitly "
+            f"(for example OCT2026), or name the file with its month and year "
+            f"(for example 'DSR October 2026.xlsx').",
+        )
 
     abbr = calendar.month_abbr[month].upper()
-    label = period.strip().upper() if period and len(period.strip()) >= 4 else f"{abbr}{year}"
+    # Always the canonical ABBRYYYY. A label typed "OCT 2026" would otherwise
+    # create a second period alongside "OCT2026", each holding half the month.
+    label = f"{abbr}{year}"
 
     _, last_day = calendar.monthrange(year, month)
     return label, date(year, month, 1), date(year, month, last_day)
@@ -299,8 +332,10 @@ def periods():
             """)
             if res:
                 return res
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise
     return fallback.get_periods()
 
 
@@ -309,9 +344,161 @@ def set_active_period(label: str):
     if is_db_ready():
         try:
             return _commit(activate_period, label)
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=str(e))
     return {"activated": label}
+
+
+@router.get("/api/periods/{label}/contents", tags=["entry"])
+def period_contents(label: str):
+    """
+    What deleting this month would remove, so the confirmation can say so
+    rather than asking the user to take it on faith.
+    """
+    if not is_db_ready():
+        raise HTTPException(503, "The database is not reachable.")
+    with session() as cx:
+        row = cx.execute(
+            "SELECT period_id, label, is_active FROM dim_period WHERE upper(label) = upper(%s)",
+            (label,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"There is no month called {label}.")
+        pid = row["period_id"]
+        counts = {}
+        for table in PERIOD_FACTS:
+            counts[table] = cx.execute(
+                f"SELECT count(*) AS n FROM {table} "
+                f"WHERE load_period_id = %s OR period_id = %s"
+                if table in ("lead", "booking") else
+                f"SELECT count(*) AS n FROM {table} WHERE load_period_id = %s",
+                (pid, pid) if table in ("lead", "booking") else (pid,)).fetchone()["n"]
+        manual = cx.execute(
+            "SELECT count(*) AS n FROM lead WHERE origin = 'MANUAL' AND period_id = %s",
+            (pid,)).fetchone()["n"] + cx.execute(
+            "SELECT count(*) AS n FROM booking WHERE origin = 'MANUAL' AND period_id = %s",
+            (pid,)).fetchone()["n"]
+        return {
+            "label": row["label"],
+            "is_active": row["is_active"],
+            "counts": {k: v for k, v in counts.items() if v},
+            "total": sum(counts.values()),
+            "hand_entered": manual,
+        }
+
+
+@router.post("/api/periods/{label}/clear", tags=["entry"])
+def clear_period(label: str, confirm: str = Query(..., description="Must repeat the month's label")):
+    """
+    Empty a month without removing it.
+
+    Distinct from deleting the month outright: the month, its date range and its
+    place in the switcher survive, so the dashboard keeps working and shows
+    zeros until a workbook is uploaded for it. This is the "start this month
+    again" button, where delete is "this month should not exist".
+
+    Uploading a workbook already replaces the month it belongs to, so this is
+    only needed when someone wants the month emptied WITHOUT loading anything
+    in its place.
+    """
+    if not is_db_ready():
+        raise HTTPException(503, "The database is not reachable.")
+    if confirm.strip().upper() != label.strip().upper():
+        raise HTTPException(400, "Type the month's label exactly to confirm.")
+
+    removed: dict[str, int] = {}
+    with db_connect() as cx:
+        with cx.transaction():
+            row = cx.execute(
+                "SELECT period_id, label FROM dim_period WHERE upper(label) = upper(%s) FOR UPDATE",
+                (label,)).fetchone()
+            if not row:
+                raise HTTPException(404, f"There is no month called {label}.")
+            pid, real_label = row[0], row[1]
+
+            for table in PERIOD_FACTS:
+                if table in ("lead", "booking"):
+                    n = cx.execute(
+                        f"DELETE FROM {table} WHERE load_period_id = %s OR period_id = %s",
+                        (pid, pid)).rowcount
+                else:
+                    n = cx.execute(
+                        f"DELETE FROM {table} WHERE load_period_id = %s", (pid,)).rowcount
+                if n:
+                    removed[table] = n
+            for table in PERIOD_TARGET_TABLES:
+                n = cx.execute(f"DELETE FROM {table} WHERE period_id = %s", (pid,)).rowcount
+                if n:
+                    removed[table] = n
+
+    broker.notify_sync("lead")
+    broker.notify_sync("booking")
+    return {"cleared": real_label, "removed": removed, "total": sum(removed.values())}
+
+
+@router.delete("/api/periods/{label}", tags=["entry"])
+def delete_period(label: str, confirm: str = Query(..., description="Must repeat the month's label")):
+    """
+    Remove a reporting month and everything loaded under it.
+
+    This cannot be undone from the dashboard - the only way back is to upload
+    that month's workbook again - so it is guarded three ways: the caller has to
+    repeat the label, the month must not be the active one, and the last
+    remaining month cannot be removed.
+    """
+    if not is_db_ready():
+        raise HTTPException(503, "The database is not reachable.")
+
+    if confirm.strip().upper() != label.strip().upper():
+        raise HTTPException(400, "Type the month's label exactly to confirm the deletion.")
+
+    removed: dict[str, int] = {}
+    with db_connect(autocommit=False) as cx:
+        with cx.transaction():
+            row = cx.execute(
+                "SELECT period_id, label, is_active FROM dim_period "
+                "WHERE upper(label) = upper(%s) FOR UPDATE",
+                (label,)).fetchone()
+            if not row:
+                raise HTTPException(404, f"There is no month called {label}.")
+            pid, real_label, is_active = row[0], row[1], row[2]
+
+            if is_active:
+                raise HTTPException(
+                    409,
+                    f"{real_label} is the month the dashboard is currently reporting on. "
+                    f"Switch to another month first, then delete it.")
+
+            if cx.execute("SELECT count(*) FROM dim_period").fetchone()[0] <= 1:
+                raise HTTPException(409, "This is the only month on record; it cannot be removed.")
+
+            # Facts first, then the targets, then the month itself, so no foreign
+            # key is left pointing at a row that has gone.
+            for table in PERIOD_FACTS:
+                if table in ("lead", "booking"):
+                    n = cx.execute(
+                        f"DELETE FROM {table} WHERE load_period_id = %s OR period_id = %s",
+                        (pid, pid)).rowcount
+                else:
+                    n = cx.execute(
+                        f"DELETE FROM {table} WHERE load_period_id = %s", (pid,)).rowcount
+                if n:
+                    removed[table] = n
+            for table in PERIOD_TARGET_TABLES:
+                n = cx.execute(f"DELETE FROM {table} WHERE period_id = %s", (pid,)).rowcount
+                if n:
+                    removed[table] = n
+            cx.execute("DELETE FROM etl_run WHERE notes LIKE %s", (f"%[{real_label}]%",))
+            cx.execute("DELETE FROM dim_period WHERE period_id = %s", (pid,))
+
+    broker.notify_sync("lead")
+    broker.notify_sync("booking")
+    return {
+        "deleted": real_label,
+        "removed": removed,
+        "total": sum(removed.values()),
+    }
 
 
 # =====================================================================

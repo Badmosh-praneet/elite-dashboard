@@ -45,15 +45,34 @@ LISTEN_DSN = os.environ.get("LISTEN_DATABASE_URL") or DSN.replace(":6543/", ":54
 # Every query in this app runs against the dsr schema, so the search path is set
 # once on connection rather than repeated in each statement.
 # min_size=0 ensures we do not block or fail on startup if the database is unconfigured.
+# Pool settings are tuned against measurement, not taste. The database is a
+# round trip away (~370 ms), and profiling showed the SQL itself is free - every
+# query, however complex, costs the same as SELECT 1 - so the only thing worth
+# optimising is the NUMBER of round trips. Per checkout we were paying three:
+#
+#   autocommit=True   psycopg opens a transaction per checkout otherwise and
+#                     rolls it back on return: two round trips, every time.
+#                     Measured 1075 ms -> 374 ms for the same work. Writers are
+#                     unaffected: _commit() and the loader open an explicit
+#                     `with cx.transaction()`, which is still atomic on an
+#                     autocommit connection.
+#   no check=         check_connection pings on every checkout: one more round
+#                     trip, ~370 ms. max_idle recycles connections well inside
+#                     the pooler's own idle timeout instead, and a connection
+#                     that does die surfaces as a handled error, not bad data.
+#   min_size=2        keeps warm connections so a request never pays TCP+TLS
+#                     setup (~460 ms) on top.
 pool = ConnectionPool(
     DSN,
-    min_size=0,
+    min_size=2,
     max_size=8,
+    max_idle=120.0,
     open=False,
     kwargs={
         "row_factory": dict_row,
         "options": "-c search_path=dsr,public",
         "prepare_threshold": None,
+        "autocommit": True,
     },
 )
 

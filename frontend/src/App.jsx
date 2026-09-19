@@ -73,9 +73,10 @@ export default function App() {
   const [loaded, setLoaded] = useState(0);
 
   // UI States
-  // The night sheet is the design's primary state now, so it is what an
-  // unconfigured browser gets.
-  const [theme, setTheme] = useState(() => localStorage.getItem('dsr.theme') || 'dark');
+  // The report sheet is the primary state: light reads as a printed document
+  // rather than a tech demo, and it survives a projector in a meeting room.
+  // The night sheet stays, one click away, for anyone working a late shift.
+  const [theme, setTheme] = useState(() => localStorage.getItem('dsr.theme') || 'light');
   const [showTables, setShowTables] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('booking');

@@ -1,128 +1,114 @@
 /* =====================================================================
-   Volkswagen Elite Motors — 藍染 aizome
-   Indigo-dyed cloth, undyed thread, one vermilion seal. Space is the layout.
+   Volkswagen Elite Motors — Daily Sales Report
+   An instrument, not a page. Rules and space carry the structure; no card
+   ever draws a box around a number. Colour means something or is absent.
    ===================================================================== */
 :root {
   color-scheme: dark;
 
-  --font-display: 'Klee One', 'Yu Kyokasho', 'Comic Sans MS', cursive;
-  --font-main: 'Klee One', 'Yu Kyokasho', 'Comic Sans MS', cursive;
-  --font-mono: 'JetBrains Mono', monospace;
+  /* One grotesque, doing everything. The previous sheet was set in a Japanese
+     handwriting face falling back to Comic Sans, which is where the whole
+     "cartoonish" reading came from. Figures are tabular everywhere, so a
+     column of numbers aligns and a changing digit never nudges its neighbour. */
+  --font-display: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  --font-main: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  /* 藍染 aizome. The ground is the dye vat - deep indigo, never black, and
-     never cold: there is red under it, the way real indigo sits on cloth.
-     Panels are the same dye at a shallower dip. */
-  --page:        #0d1524;
-  --surface:     #142032;
-  --surface-sub: #1a2840;
-  --sunken:      #22324c;
+  /* Night sheet. Near-black with a trace of blue in it, never pure #000:
+     a true black ground makes white figures vibrate at this size. */
+  --page:        #0d0f13;
+  --surface:     #14171d;
+  --surface-sub: #1a1e26;
+  --sunken:      #232833;
 
-  /* Undyed thread, not white. */
-  --ink:         #e9edf5;
-  --ink-2:       #b7c2d6;
-  --ink-muted:   #7c89a0;
-  --grid:        #23334d;
-  --axis:        #35475f;
-  --border:        rgba(233, 237, 245, 0.10);
-  --border-strong: rgba(233, 237, 245, 0.20);
+  --ink:         #f0f1f3;
+  --ink-2:       #b4bac6;
+  --ink-muted:   #868d9b;
+  --grid:        #23272f;      /* hairline between rows */
+  --axis:        #363c47;      /* section rule */
+  --border:        rgba(240, 241, 243, 0.10);
+  --border-strong: rgba(240, 241, 243, 0.20);
 
-  /* 朱 shu stays, but rationed. On indigo a single vermilion mark carries
-     further than a dozen did on paper, so it is now reserved for identity
-     (the seal, the live stamp) and for things that are actually wrong. */
-  --s1: #4d97cd;
-  --s1-hover: #6aabda;
-  --s1-light: rgba(77, 151, 205, 0.14);
-  --s2: #e2674a;
-  --s3: #2fa27c;
-  --s3-light: rgba(47, 162, 124, 0.15);
-  --shu: #e2674a;
-  --shu-ink: #ef8067;
+  /* Navy carries structure and the primary series. Everything else appears
+     only on a figure somebody has to act on. */
+  --s1: #6b9bd8;
+  --s1-hover: #8bb3e4;
+  --s1-light: rgba(107, 155, 216, 0.14);
+  --s2: #d8705a;
+  --s3: #4fb38c;
+  --s3-light: rgba(79, 179, 140, 0.15);
+  --shu: #6b9bd8;
+  --shu-ink: #8bb3e4;
 
-  /* Chart palette, validated against THIS ground (#142032), not the old paper.
-     The ageing ramp deliberately leaves the indigo family: a blue ramp on a
-     blue ground is legible by the numbers but muddy to read, and 木蘭 kihada
-     -- the undyed and ochre threads that run through aizome cloth - separates
-     cleanly while still belonging. Re-run the checker, never re-step by eye. */
-  --viz-1: #4d97cd;  --viz-2: #e2674a;  --viz-3: #2fa27c;
-  --viz-a1: #6f5d38; --viz-a2: #957b41; --viz-a3: #bd9d4d;
-  --viz-a4: #dcc073; --viz-a5: #f2e0a6;
+  --viz-1: #6b9bd8;  --viz-2: #d8705a;  --viz-3: #4fb38c;
+  /* Ageing runs cool to hot: fresh stock is structural, old stock is a cost. */
+  --viz-a1: #6b9bd8; --viz-a2: #5480b8; --viz-a3: #4e6d96;
+  --viz-a4: #c9a455; --viz-a5: #d8705a;
 
-  --o1: #1c3552;  --o2: #2b5378;  --o3: #4d97cd;  --o4: #8cc0e4;  --o5: #c7e0f2;
+  --o1: #1b2738;  --o2: #2a3d57;  --o3: #6b9bd8;  --o4: #9cc0e6;  --o5: #cadff2;
 
-  --good: #2fa27c;
-  --good-text: #4cba96;
-  --warning: #d2a03f;
-  --serious: #e08a5c;
-  --critical: #e2674a;
-  --critical-light: rgba(226, 103, 74, 0.13);
+  --good: #4fb38c;
+  --good-text: #6bc5a2;
+  --warning: #c9a455;
+  --serious: #d18a5e;
+  --critical: #d8705a;
+  --critical-light: rgba(216, 112, 90, 0.13);
 
-  --radius-sm: 2px;
-  --radius-md: 3px;
-  --radius-lg: 4px;
+  /* Square. Rounding is the single clearest tell of a consumer app, and the
+     one thing a manager reads as "toy" before reading anything else. */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 2px 14px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.55);
-
-  /* Indigo is a CLOTH dye, so the ground is woven rather than laid: a warp and
-     a weft at low alpha, with irregular mottling over it the way a dipped
-     length is never perfectly even. */
-  --cloth-warp: rgba(233, 237, 245, 0.030);
-  --cloth-weft: rgba(0, 0, 0, 0.16);
-  --paper-fibre:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)' opacity='0.5'/%3E%3C/svg%3E");
-  --paper-fibre-opacity: 0.22;
-  --seigaiha-ink: rgba(233, 237, 245, 0.05);
+  /* Nothing floats. Depth is carried by rules, not by drop shadows. */
+  --shadow-sm: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.44);
+  --shadow-lg: 0 18px 52px rgba(0, 0, 0, 0.55);
 }
 
-/* The undyed sheet - cloth off the loom before it meets the vat. Secondary to
-   the night, and stepped for paper rather than flipped from it. */
+/* The report sheet, and the default. Light reads as a printed document rather
+   than as a tech demo, and it survives a projector in a meeting room. */
 [data-theme="light"] {
   color-scheme: light;
 
-  --page:        #e3e6e6;
-  --surface:     #f3f5f5;
-  --surface-sub: #eaedec;
-  --sunken:      #dee2e1;
+  --page:        #fafaf7;
+  --surface:     #ffffff;
+  --surface-sub: #f4f4f0;
+  --sunken:      #efefea;
 
-  --ink:         #16223a;
-  --ink-2:       #41506b;
-  --ink-muted:   #7a869a;
-  --grid:        #d3d9d8;
-  --axis:        #b6c0c0;
-  --border:        rgba(22, 34, 58, 0.11);
-  --border-strong: rgba(22, 34, 58, 0.22);
+  --ink:         #101319;
+  --ink-2:       #3d434f;
+  --ink-muted:   #5f6673;      /* 5.3:1 on the ground — passes at 13px */
+  --grid:        #e3e3de;
+  --axis:        #c9c9c2;
+  --border:        rgba(16, 19, 25, 0.10);
+  --border-strong: rgba(16, 19, 25, 0.22);
 
-  --s1: #155f92;
-  --s1-hover: #0f4a74;
-  --s1-light: rgba(21, 95, 146, 0.09);
-  --s2: #c1432a;
-  --s3: #1a7d5e;
-  --s3-light: rgba(26, 125, 94, 0.11);
-  --shu: #c1432a;
-  --shu-ink: #9c3421;
+  --s1: #1b3a6b;
+  --s1-hover: #0f2547;
+  --s1-light: rgba(27, 58, 107, 0.08);
+  --s2: #a33a2a;
+  --s3: #1f6f52;
+  --s3-light: rgba(31, 111, 82, 0.10);
+  --shu: #1b3a6b;
+  --shu-ink: #1b3a6b;
 
-  --viz-1: #155f92;  --viz-2: #c1432a;  --viz-3: #1a7d5e;
-  --viz-a1: #c9a95a; --viz-a2: #a98c45; --viz-a3: #867034;
-  --viz-a4: #635227; --viz-a5: #40351a;
+  --viz-1: #1b3a6b;  --viz-2: #a33a2a;  --viz-3: #1f6f52;
+  --viz-a1: #1b3a6b; --viz-a2: #2e5288; --viz-a3: #4b6fa4;
+  --viz-a4: #96701e; --viz-a5: #a33a2a;
 
-  --o1: #c3d6e6;  --o2: #7fa9ca;  --o3: #155f92;  --o4: #0f4470;  --o5: #0a2b49;
+  --o1: #c7d2e2;  --o2: #91a6c4;  --o3: #5c7ba6;  --o4: #2e5288;  --o5: #12294d;
 
-  --good: #1a7d5e;
-  --good-text: #14624a;
-  --warning: #a8781c;
-  --serious: #c1642a;
-  --critical: #a8332a;
-  --critical-light: rgba(168, 51, 42, 0.10);
+  --good: #1f6f52;
+  --good-text: #17553e;
+  --warning: #96701e;
+  --serious: #a0522d;
+  --critical: #a33a2a;
+  --critical-light: rgba(163, 58, 42, 0.09);
 
-  --shadow-sm: 0 1px 2px rgba(25, 35, 55, 0.06);
-  --shadow-md: 0 2px 10px rgba(25, 35, 55, 0.08);
-  --shadow-lg: 0 10px 34px rgba(25, 35, 55, 0.14);
-
-  --cloth-warp: rgba(22, 34, 58, 0.022);
-  --cloth-weft: rgba(22, 34, 58, 0.030);
-  --paper-fibre-opacity: 0.40;
-  --seigaiha-ink: rgba(22, 34, 58, 0.055);
+  --shadow-sm: none;
+  --shadow-md: 0 6px 22px rgba(16, 19, 25, 0.09);
+  --shadow-lg: 0 16px 44px rgba(16, 19, 25, 0.14);
 }
 
 * { box-sizing: border-box; }
@@ -132,49 +118,20 @@ body {
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-main);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13.5px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-wrap: pretty;
+  /* Every figure on this sheet is tabular. It is the difference between a
+     leaderboard that reads as a table and one that jitters column to column
+     as the numbers change under it. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
-/* The grain sits above the ground and below everything else, so panels read as
-   separate sheets rather than as windows cut into one textured backdrop. */
-/* The weave. A warp and a weft one pixel wide on a 3px repeat, so at reading
-   distance it is a texture rather than a grid - the cloth the dye sits in. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-image:
-    var(--paper-fibre),
-    repeating-linear-gradient(90deg, var(--cloth-warp) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(0deg, var(--cloth-weft) 0 1px, transparent 1px 3px);
-  opacity: var(--paper-fibre-opacity);
-  mix-blend-mode: soft-light;
-}
-[data-theme="light"] body::before { mix-blend-mode: multiply; }
-
-/* 青海波 seigaiha - the wave that stands for the sea, and for calm repeating
-   fortune. At this opacity it is felt more than seen, which is the point. */
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image:
-    radial-gradient(circle at 50% 100%, transparent 11px, var(--seigaiha-ink) 11.5px, transparent 12.5px),
-    radial-gradient(circle at 50% 100%, transparent 17px, var(--seigaiha-ink) 17.5px, transparent 18.5px),
-    radial-gradient(circle at 50% 100%, transparent 23px, var(--seigaiha-ink) 23.5px, transparent 24.5px);
-  background-size: 56px 28px;
-  background-position: 0 0, 0 0, 0 0;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, transparent 420px);
-          mask-image: linear-gradient(to bottom, #000 0, transparent 420px);
-}
+/* The cloth weave, the paper fibre and the seigaiha wave that used to sit over
+   the whole page are gone. They were the texture of a hand-made object, which
+   is the opposite of what a figure wants behind it. */
 
 /* A fixed rail and a scrolling sheet. The rail holds still because it is the
    one thing that must be reachable from anywhere on a very tall page. */
@@ -210,41 +167,39 @@ body::after {
 }
 
 /* Typography Helpers */
+/* Negative tracking tightens as the size grows - a grotesque set large at
+   default tracking reads loose and soft, which is half of why big figures
+   looked friendly rather than authoritative. */
 h1, h2, h3, h4 { margin: 0; color: var(--ink); }
 h1 {
   font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 600;
-  letter-spacing: 0.005em;
-  line-height: 1.3;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 h2 {
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 14.5px;
   font-weight: 600;
-  letter-spacing: 0.015em;
+  letter-spacing: -0.005em;
 }
-h3 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+h3 { font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
 
-/* A panel title is announced by a small vermilion mark, the way a seal marks
-   a page - not by a heavier weight or a bigger size. */
+/* A panel title is a title. The vermilion seal-mark that used to precede each
+   one is gone: fourteen identical marks down a page is decoration, not
+   hierarchy, and the hairline above the panel already says a section began. */
 .panel-header h2,
 .panel-head h2 {
   display: flex;
   align-items: center;
   gap: 9px;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 .panel-header h2::before,
-.panel-head h2::before {
-  content: '';
-  width: 14px;
-  height: 2px;
-  flex: none;
-  background: var(--shu);
-  opacity: 0.85;
-}
-.panel-header h2,
-.panel-head h2 { letter-spacing: 0.02em; }
+.panel-head h2::before { content: none; }
 
 button, select, input, textarea {
   font-family: inherit;
@@ -296,12 +251,13 @@ button.primary:hover {
   font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--shu-ink);
+  color: var(--good-text);
   background: transparent;
-  border: 1.5px solid var(--shu);
-  border-radius: 2px;
-  padding: 4px 11px;
-  transform: rotate(-1.2deg);
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  font-weight: 600;
+  letter-spacing: 0.14em;
 }
 .live-dot {
   width: 8px;
@@ -383,30 +339,21 @@ button.primary:hover {
 }
 
 /* Card Panel */
+/* No cards.
+   A panel is a region of the sheet, not an object on it: one hairline above it
+   and space around it. Borders, rounding, fills and shadows all competed with
+   the data they contained - fourteen boxed panels down a page read as
+   fourteen widgets rather than as one report. */
 .panel {
   position: relative;
-  background: var(--surface);
-  border: 1px solid var(--grid);
-  border-radius: var(--radius-lg);
-  padding: 26px 28px 24px;
-  box-shadow: var(--shadow-sm);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--axis);
+  border-radius: 0;
+  padding: 20px 0 30px;
+  box-shadow: none;
 }
-/* The top edge is inked like a brush stroke: full weight in the middle,
-   lifting off at both ends. It replaces the heavier card border. */
-.panel::before {
-  content: '';
-  position: absolute;
-  left: -1px; right: -1px; top: -1px;
-  height: 2px;
-  background: linear-gradient(to right,
-    transparent, var(--axis) 10%, var(--axis) 90%, transparent);
-}
-/* Raising a panel lifts its selvedge rather than moving the panel, so nothing
-   on the page shifts under the cursor. */
-.panel { transition: border-color 0.25s ease; }
-.panel:hover { border-color: var(--axis); }
-.panel:hover::before { background: linear-gradient(to right,
-    transparent, var(--ink-muted) 10%, var(--ink-muted) 90%, transparent); }
+.panel::before { content: none; }
 .panel-header { margin-bottom: 18px; }
 .panel-head {
   display: flex;
@@ -425,25 +372,26 @@ button.primary:hover {
 .grid-tiles {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 18px;
-  margin-bottom: 34px;
+  column-gap: 0;
+  row-gap: 0;
+  margin-bottom: 40px;
 }
 @media (max-width: 1080px) { .grid-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px)  { .grid-tiles { grid-template-columns: minmax(0, 1fr); } }
 
 /* Tile */
+/* Eight tiles in two rows read as eight boxes; eight FIGURES separated by a
+   hairline read as one instrument panel. Only the top rule is drawn, so the
+   row reads across rather than each cell fencing itself off. */
 .kpi-tile {
-  background: var(--surface);
-  border: 1px solid var(--grid);
-  border-radius: var(--radius-md);
-  padding: 18px 20px 20px;
-  box-shadow: var(--shadow-sm);
-  transition: border-color 0.2s ease, background 0.2s ease;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--grid);
+  border-radius: 0;
+  padding: 16px 22px 20px 0;
+  box-shadow: none;
 }
-.kpi-tile:hover {
-  border-color: var(--axis);
-  background: var(--surface);
-}
+.kpi-tile:hover { background: transparent; }
 .kpi-tile {
   display: flex;
   flex-direction: column;
@@ -462,9 +410,9 @@ button.primary:hover {
 }
 .kpi-tile .val {
   font-family: var(--font-display);
-  font-size: 32px;
+  font-size: 36px;
   font-weight: 500;
-  letter-spacing: 0;
+  letter-spacing: -0.035em;
   color: var(--ink);
   line-height: 1.05;
   font-variant-numeric: lining-nums tabular-nums;
@@ -837,12 +785,13 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   width: 34px;
   height: 34px;
   flex: none;
-  border: 1.5px solid var(--shu);
-  color: var(--shu-ink);
+  border: 1px solid var(--ink);
+  color: var(--ink);
   font-family: var(--font-display);
-  font-size: 12px;
-  border-radius: 2px;
-  transform: rotate(-2.5deg);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 0;
 }
 .rail-name {
   font-family: var(--font-display);

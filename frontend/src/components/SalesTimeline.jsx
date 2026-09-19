@@ -151,7 +151,7 @@ export default function SalesTimeline({ refreshKey }) {
                 line rather than a second bar - same axis, no second scale. */}
             <ComposedChart data={rows} margin={{ top: 10, right: 12, left: -18, bottom: 0 }}
                            barSize={grain === 'day' ? 12 : 30}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--grid)" />
+              <CartesianGrid vertical={false} stroke="var(--grid)" strokeWidth={1} />
               <XAxis dataKey="tick" axisLine={false} tickLine={false} tick={AXIS} dy={8}
                      interval={grain === 'day' ? 2 : 0} />
               <YAxis axisLine={false} tickLine={false} tick={AXIS} />

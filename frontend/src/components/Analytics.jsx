@@ -19,8 +19,11 @@ import { n0, pct } from '../api/client';
 
 /* ---- shared chart chrome ---- */
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
-const GRID = { strokeDasharray: '3 3', stroke: 'var(--grid)', vertical: false };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 11 };
+// Solid hairlines rather than dashes. A dashed grid is a second texture
+// competing with the bars for attention; a continuous 1px rule reads as a
+// measuring line and then disappears, which is all a gridline should do.
+const GRID = { stroke: 'var(--grid)', strokeWidth: 1, vertical: false };
 const LEGEND = {
   wrapperStyle: { fontSize: '12px', color: 'var(--ink-muted)', paddingTop: '10px' },
   iconType: 'circle',
@@ -325,7 +328,7 @@ function Backorders({ backorders = [] }) {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} layout="vertical"
                   margin={{ top: 4, right: 52, left: 4, bottom: 0 }} barSize={18}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" horizontal={false} />
+          <CartesianGrid stroke="var(--grid)" strokeWidth={1} horizontal={false} />
           <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
                  tickFormatter={v => `${v}d`} />
           <YAxis type="category" dataKey="who" width={132} axisLine={false}
@@ -384,7 +387,7 @@ function ConsultantConversion({ scorecards = [] }) {
         <BarChart data={data} layout="vertical"
                   margin={{ top: 4, right: 44, left: 4, bottom: 0 }}
                   barGap={2} barSize={11}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" horizontal={false} />
+          <CartesianGrid stroke="var(--grid)" strokeWidth={1} horizontal={false} />
           <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
                  tickFormatter={v => `${v}%`} />
           <YAxis type="category" dataKey="consultant" width={128} axisLine={false}

@@ -243,6 +243,74 @@ export async function uploadReportFile(file, period, uploadedBy, tableType) {
 
 export const uploadExcelWorkbook = uploadReportFile;
 
+/**
+ * Ingest a workbook without holding the HTTP request open.
+ *
+ * A DSR workbook takes ~100 seconds to ingest. Render's gateway ends any
+ * request at about 60, and a dev-server proxy defaults to the same, so a
+ * synchronous upload was reported as a 502 while the ingest carried on and
+ * finished — the month loaded, and the person who pressed the button was told
+ * it had failed. Nothing can time out a request that returns in milliseconds,
+ * so the upload now starts a job and this polls it.
+ *
+ * `onProgress(state)` fires on each poll so the modal can say where it is.
+ */
+export async function uploadWorkbookInBackground(file, period, uploadedBy, onProgress) {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (period) formData.append("period", period);
+  if (uploadedBy) formData.append("uploaded_by", uploadedBy);
+
+  let res;
+  try {
+    res = await fetch("/api/upload-report/start", { method: "POST", body: formData });
+  } catch (err) {
+    throw new Error(`Could not reach the server (${err.message}). Check the API is running.`);
+  }
+  const startBody = await res.text();
+  let started = null;
+  try { started = JSON.parse(startBody); } catch { /* handled below */ }
+  if (!res.ok) {
+    throw new Error((started && started.detail)
+      || `Could not start the ingest (HTTP ${res.status}).`);
+  }
+  if (!started || !started.job_id) {
+    throw new Error("The server accepted the file but did not return a job id.");
+  }
+
+  // Poll until it finishes. Failures to reach the server are tolerated for a
+  // while: the ingest is running server-side regardless of this connection,
+  // which is the whole point of doing it this way.
+  const deadline = Date.now() + 15 * 60 * 1000;
+  let consecutiveErrors = 0;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000));
+    let job;
+    try {
+      const p = await fetch(`/api/upload-report/status/${started.job_id}`);
+      if (p.status === 404) {
+        throw new Error("The ingest job is no longer on the server — it may have restarted mid-load. "
+                        + "Refresh and check whether the month arrived before uploading again.");
+      }
+      job = await p.json();
+      consecutiveErrors = 0;
+    } catch (err) {
+      if (err.message && err.message.startsWith("The ingest job is no longer")) throw err;
+      if (++consecutiveErrors >= 10) {
+        throw new Error("Lost contact with the server while the ingest was running. "
+                        + "It may still have finished — refresh before uploading again.");
+      }
+      continue;
+    }
+
+    if (onProgress) onProgress(job);
+    if (job.state === "done") return job.result || {};
+    if (job.state === "failed") throw new Error(job.error || "The ingest failed on the server.");
+  }
+  throw new Error("The ingest is taking unusually long. It may still finish — "
+                  + "refresh in a few minutes before uploading again.");
+}
+
 /* ---- Export ---- */
 
 /**

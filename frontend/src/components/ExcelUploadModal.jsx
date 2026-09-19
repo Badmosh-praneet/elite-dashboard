@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, UploadCloud, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import { uploadReportFile, n0 } from '../api/client';
+import { uploadReportFile, uploadWorkbookInBackground, n0 } from '../api/client';
 
 export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) {
   const [file, setFile] = useState(null);
@@ -12,6 +12,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [step, setStep] = useState('');
   // What the month being uploaded into currently holds. An upload REPLACES that
   // month rather than adding to it, which is the right behaviour but invisible
   // -- so the modal says it, with the real figures, before anyone commits.
@@ -88,8 +89,16 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
     setError(null);
     setResult(null);
 
+    setStep('');
     try {
-      const data = await uploadReportFile(file, period, uploader, tableType);
+      // Excel goes through the background job: a ~100s ingest cannot survive a
+      // 60s gateway, so the request returns at once and we poll. CSV and text
+      // are quick and stay on the direct path.
+      const isWorkbook = /\.(xlsx|xlsm|xls)$/i.test(file.name);
+      const data = isWorkbook
+        ? await uploadWorkbookInBackground(file, period, uploader,
+            job => setStep(job.step || job.state || ''))
+        : await uploadReportFile(file, period, uploader, tableType);
       setResult(data);
       onUploadComplete(`${data.period} replaced from '${data.filename}'`, data);
     } catch (err) {
@@ -272,9 +281,10 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                     indistinguishable from a hung one, and people close the tab
                     on an ingest that was going to succeed. */}
                 <div style={{ fontSize: '11.5px', color: 'var(--ink-muted)' }}>
-                  {elapsed < 90
-                    ? 'This usually takes about 90 seconds. Leave this open.'
-                    : 'Taking longer than usual — still working. Leave this open.'}
+                  {step ? step.charAt(0).toUpperCase() + step.slice(1) + ' — ' : ''}
+                  {elapsed < 120
+                    ? 'this usually takes about two minutes. Leave this open.'
+                    : 'taking longer than usual, still working. Leave this open.'}
                 </div>
               </div>
             </div>

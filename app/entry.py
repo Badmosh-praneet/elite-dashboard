@@ -17,6 +17,9 @@ import json
 import logging
 import os
 import re
+import threading
+import time
+import uuid
 from datetime import date, datetime
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -504,6 +507,144 @@ def delete_period(label: str, confirm: str = Query(..., description="Must repeat
 # =====================================================================
 # Excel Workbook Ingestion Pipeline
 # =====================================================================
+
+# =====================================================================
+# Background ingestion
+# =====================================================================
+#
+# Ingesting a DSR workbook takes ~100 seconds: openpyxl parses 22 sheets, then
+# ~2,600 rows are written to a database a round trip away. Render's gateway
+# ends any request at about 60 seconds, and a dev-server proxy defaults to the
+# same, so the browser was told 502 while the ingest carried on and finished.
+# The month loaded, the dashboard eventually showed it, and the person who
+# pressed the button was told it had failed - so they pressed it again.
+#
+# No timeout can be configured away on a managed host, so the request no longer
+# waits: it hands the work to a thread and returns a job id at once. Nothing in
+# the path can time out a request that answers in a few milliseconds.
+#
+# The registry is a plain dict. Jobs are ephemeral and this runs as one process
+# per service; a job lost to a restart is a job whose upload has to be redone,
+# which is true of any in-flight request anyway.
+
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+_JOB_TTL_SECONDS = 3600
+
+
+def _job_set(job_id: str, **fields) -> None:
+    with _JOBS_LOCK:
+        job = _JOBS.setdefault(job_id, {})
+        job.update(fields)
+        job["updated_at"] = time.time()
+
+
+def _job_get(job_id: str) -> dict | None:
+    with _JOBS_LOCK:
+        # Opportunistic sweep, so a long-lived process does not accumulate
+        # every workbook anyone has ever uploaded.
+        cutoff = time.time() - _JOB_TTL_SECONDS
+        for k in [k for k, v in _JOBS.items()
+                  if v.get("state") in ("done", "failed") and v.get("updated_at", 0) < cutoff]:
+            _JOBS.pop(k, None)
+        job = _JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
+                   period_start: date, period_end: date, uploaded_by: str) -> None:
+    """Runs off the request thread. Only ever writes its result into _JOBS."""
+    try:
+        _job_set(job_id, state="running", step="parsing the workbook")
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+
+        _job_set(job_id, step="writing to the database")
+        with db_connect(autocommit=True) as cx:
+            loader = Loader(cx, wb, period_label, period_start, period_end)
+            counts = loader.run()
+            cx.execute("""
+                INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
+                VALUES (%s, now(), now(), %s, %s)
+            """, (
+                fname, json.dumps(counts),
+                f"Uploaded by {uploaded_by}"
+                + (("; " + "; ".join(loader.warnings)) if loader.warnings else ""),
+            ))
+
+        # Tell every open dashboard, the same way a synchronous upload did.
+        try:
+            broker.notify_sync("etl_run")
+        except Exception:
+            pass
+
+        _job_set(job_id, state="done", step="complete", counts=counts,
+                 warnings=loader.warnings,
+                 result={
+                     "status": "success",
+                     "message": f"Successfully ingested '{fname}' for {period_label}.",
+                     "filename": fname,
+                     "file_type": "excel",
+                     "period": period_label,
+                     "period_range": f"{period_start} to {period_end}",
+                     "uploaded_by": uploaded_by,
+                     "counts": counts,
+                     "warnings": loader.warnings,
+                     "environment": "postgres",
+                 })
+    except Exception as exc:
+        log.exception("ingest job %s failed", job_id)
+        _job_set(job_id, state="failed", step="failed", error=str(exc))
+
+
+@router.post("/api/upload-report/start", tags=["ingestion"], status_code=202)
+async def start_upload(
+    file: UploadFile = File(..., description="DSR workbook (.xlsx, .xlsm)"),
+    period: str | None = Form(None),
+    uploaded_by: str = Form("Reporting Agent"),
+):
+    """
+    Accept a workbook and ingest it in the background.
+
+    Returns at once with a job id; poll /api/upload-report/status/{job_id}.
+    This is what the dashboard uses, because a ~100 second ingest cannot
+    survive a 60 second gateway.
+    """
+    fname = file.filename or "unknown_report.xlsx"
+    if not fname.lower().endswith((".xlsx", ".xlsm", ".xls")):
+        raise HTTPException(400, "Background ingest takes an Excel workbook "
+                                 "(.xlsx, .xlsm). Use /api/upload-report for CSV or text.")
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Uploaded file is empty.")
+    if not is_db_ready():
+        raise HTTPException(503, "The database is not reachable.")
+
+    period_label, period_start, period_end = _resolve_period(period, fname)
+
+    job_id = uuid.uuid4().hex
+    _job_set(job_id, state="queued", step="queued", filename=fname,
+             period=period_label, started_at=time.time())
+    threading.Thread(
+        target=_ingest_worker,
+        args=(job_id, content, fname, period_label, period_start, period_end, uploaded_by),
+        daemon=True,
+        name=f"ingest-{job_id[:8]}",
+    ).start()
+
+    return {"job_id": job_id, "state": "queued", "period": period_label, "filename": fname}
+
+
+@router.get("/api/upload-report/status/{job_id}", tags=["ingestion"])
+def upload_status(job_id: str):
+    """Where a background ingest has got to. 404 once the job has expired."""
+    job = _job_get(job_id)
+    if not job:
+        raise HTTPException(404, "No such ingest job (it may have expired or the server restarted).")
+    out = {k: v for k, v in job.items() if k != "updated_at"}
+    if job.get("started_at"):
+        out["elapsed"] = round(time.time() - job["started_at"], 1)
+    return out
+
 
 @router.post("/api/upload-dsr", tags=["ingestion"])
 @router.post("/api/upload-report", tags=["ingestion"])

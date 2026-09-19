@@ -1,91 +1,85 @@
+/**
+ * The one figure the sheet exists for.
+ *
+ * This used to be a flex row that put the figure and a progress meter side by
+ * side and let them fight for the same 24px gap: the label row above the meter
+ * sat level with the middle of a 82px numeral, "41 units to goal" ran into the
+ * right edge, and the meter itself was a rounded pill on a page with no other
+ * rounded thing on it.
+ *
+ * Now it reads top to bottom the way the number is actually used: what it is,
+ * what it says, what it means, and how far through the month that puts us. The
+ * three supporting figures sit on the right, separated by hairlines rather than
+ * by guesswork about gaps.
+ */
+
 import React from 'react';
-import { Target, TrendingUp, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { n0, pct } from '../api/client';
+import { n0, pct, money } from '../api/client';
 
 export default function HeroMetric({ kpi = {} }) {
   const bookings = Number(kpi.bookings || 0);
   const target = Number(kpi.booking_target || kpi.target || 84);
   const ratio = target > 0 ? (bookings / target) * 100 : 0;
   const shortfall = Math.max(0, target - bookings);
+  const collected = kpi.booking_amount_collected;
 
-  // Meter color severity based on achievement
-  const getMeterColor = (p) => {
-    if (p >= 95) return 'var(--good)';
-    if (p >= 75) return 'var(--warning)';
-    return 'var(--shu)';
-  };
+  // Colour is a judgement, not decoration: the bar is structural navy until
+  // the month is genuinely at risk, and only then does it change.
+  const meter = ratio >= 95 ? 'var(--good)'
+              : ratio >= 60 ? 'var(--s1)'
+              : 'var(--serious)';
+
+  const stats = [
+    { label: 'Achieved', value: pct(ratio), tone: 'var(--ink)' },
+    {
+      label: shortfall > 0 ? 'To goal' : 'Status',
+      value: shortfall > 0 ? n0(shortfall) : 'Reached',
+      tone: shortfall > 0 ? 'var(--serious)' : 'var(--good-text)',
+    },
+    ...(collected != null
+      ? [{ label: 'Advance collected', value: money(collected), tone: 'var(--ink)' }]
+      : []),
+  ];
 
   return (
-    <div className="panel" style={{
-      marginBottom: '18px',
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: '24px',
-      alignItems: 'center',
-      borderLeft: '2.5px solid var(--shu)',
-    }}>
-      <div>
-        <div style={{
-          fontSize: '10.5px',
-          fontWeight: '500',
-          textTransform: 'uppercase',
-          letterSpacing: '0.15em',
-          color: 'var(--ink-muted)',
-          marginBottom: '10px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-        }}>
-          <Target size={13} style={{ color: 'var(--shu)' }} />
-          <span>Bookings This Month</span>
+    <div className="hero-band">
+      <div className="hero-label">Bookings this month</div>
+
+      <div className="hero-row">
+        {/* No caption under the figure. "Bookings against the month's target"
+            said what the label above it already says, and it pushed the left
+            column taller than the right, so the supporting figures bottom-
+            aligned to a sentence instead of to the numeral they qualify. */}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+          <span className="hero-figure">{n0(bookings)}</span>
+          <span className="hero-of">/ {n0(target)}</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-          <span className="hero-figure" style={{ fontWeight: 500 }}>
-            {n0(bookings)}
-          </span>
-          <span style={{
-            fontFamily: 'var(--font-display)', fontSize: '17px',
-            color: 'var(--ink-muted)', fontWeight: '400',
-          }}>
-            / {n0(target)}
-          </span>
+
+        <div className="hero-stats">
+          {stats.map(s => (
+            <div key={s.label} className="hero-stat">
+              <div className="hero-stat-label">{s.label}</div>
+              <div className="hero-stat-value" style={{ color: s.tone }}>{s.value}</div>
+            </div>
+          ))}
         </div>
       </div>
 
-      <div style={{ flex: '1 1 320px', minWidth: '240px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
-          <span style={{ fontWeight: '600', color: 'var(--ink-2)' }}>
-            Target Achievement: <b>{pct(ratio)}</b>
-          </span>
-          <span style={{ color: shortfall > 0 ? 'var(--serious)' : 'var(--good)', fontWeight: '600' }}>
-            {shortfall > 0 ? `${n0(shortfall)} units to goal` : 'Goal reached'}
-          </span>
-        </div>
-        <div style={{
-          height: '12px',
-          background: 'var(--sunken)',
-          borderRadius: '999px',
-          overflow: 'hidden',
-          position: 'relative',
-        }}>
-          <div style={{
-            height: '100%',
-            width: `${Math.min(100, Math.max(2, ratio))}%`,
-            background: getMeterColor(ratio),
-            borderRadius: '999px',
-            transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
-          }} />
-        </div>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          fontSize: '11px',
-          color: 'var(--ink-muted)',
-          marginTop: '6px',
-        }}>
-          <span>0</span>
-          <span>Target: {n0(target)}</span>
-        </div>
+      {/* A rule, not a pill. The tick marks where the month actually stands, so
+          the eye lands on the position rather than on the shape of the bar. */}
+      <div className="hero-meter">
+        <div
+          className="hero-meter-fill"
+          style={{ width: `${Math.min(100, Math.max(1.5, ratio))}%`, background: meter }}
+        />
+        <div
+          className="hero-meter-tick"
+          style={{ left: `${Math.min(100, Math.max(1.5, ratio))}%` }}
+        />
+      </div>
+      <div className="hero-scale">
+        <span>0</span>
+        <span>Target {n0(target)}</span>
       </div>
     </div>
   );

@@ -752,14 +752,113 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   50%      { transform: scale(1);    opacity: 1; }
 }
 
-/* The hero is the one figure the sheet exists for, so it gets the room to be
-   read from across a desk rather than being a slightly larger tile. */
+/* =====================================================================
+   The hero band
+   =====================================================================
+
+   The one figure the sheet exists for, so it is given room rather than being
+   a slightly larger tile. It reads top to bottom - what it is, what it says,
+   what that means, how far through the month - instead of setting an 82px
+   numeral beside a meter and hoping a 24px gap keeps them apart. */
+.hero-band {
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--grid);
+  padding: 26px 0 30px;
+  margin-bottom: 40px;
+}
+
+.hero-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 20px;
+}
+
+.hero-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 40px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+
 .hero-figure {
   font-family: var(--font-display);
-  font-size: clamp(56px, 7vw, 82px);
-  line-height: 0.92;
-  letter-spacing: 0.005em;
+  font-size: clamp(64px, 8vw, 104px);
+  font-weight: 400;              /* the serif has one weight */
+  line-height: 0.82;
+  letter-spacing: -0.035em;
   font-variant-numeric: lining-nums tabular-nums;
+}
+.hero-of {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 2.4vw, 30px);
+  color: var(--ink-muted);
+  letter-spacing: -0.02em;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+/* Hairlines between the supporting figures, so they are separated by a rule
+   rather than by a gap that has to be guessed at every breakpoint. */
+.hero-stats { display: flex; flex-wrap: wrap; }
+.hero-stat {
+  padding: 0 clamp(18px, 2.4vw, 34px);
+  border-left: 1px solid var(--grid);
+}
+.hero-stat:first-child { border-left: none; padding-left: 0; }
+.hero-stat:last-child { padding-right: 0; }
+.hero-stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 10px;
+  white-space: nowrap;
+}
+.hero-stat-value {
+  font-size: clamp(22px, 2.3vw, 30px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* A rule, not a pill: 3px, square, with a tick at the position reached. The
+   old meter was a 12px rounded bar - the only rounded thing left on the page. */
+.hero-meter {
+  position: relative;
+  height: 3px;
+  background: var(--sunken);
+}
+.hero-meter-fill {
+  height: 3px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hero-meter-tick {
+  position: absolute;
+  top: -6px;
+  width: 1px;
+  height: 15px;
+  background: var(--ink);
+  transition: left 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hero-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  margin-top: 9px;
+}
+
+@media (max-width: 720px) {
+  .hero-row { gap: 24px; }
+  .hero-stat:first-child { padding-left: 0; }
+  .hero-stats { gap: 0 4px; }
 }
 
 /* =====================================================================

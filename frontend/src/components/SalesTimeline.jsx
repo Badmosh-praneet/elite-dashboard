@@ -16,7 +16,8 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
   Tooltip as RechartsTooltip, Legend,
 } from 'recharts';
-import { api, n0, money } from '../api/client';
+import { AlertTriangle } from 'lucide-react';
+import { api, n0, money, dt } from '../api/client';
 
 const GRAINS = [
   { key: 'day', label: 'Day' },
@@ -133,6 +134,27 @@ export default function SalesTimeline({ refreshKey }) {
             ` · busiest ${grain}: ${best.tick} (${n0(best.bookings)})`}
         </span>
       </div>
+
+      {/* A workbook loaded into a month it was not written for keeps the dates
+          it was written with, so the axis below can legitimately run outside
+          the month named above it. Plotting that silently would be a chart
+          disagreeing with its own title, so it is said out loud. */}
+      {data && data.dates_outside_period && data.covers && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          margin: '0 0 14px', padding: '9px 12px',
+          border: '1px solid var(--warning)', background: 'var(--critical-light)',
+          fontSize: 11.5, lineHeight: 1.5, color: 'var(--warning)',
+        }}>
+          <AlertTriangle size={14} style={{ flex: 'none', marginTop: 1 }} />
+          <span>
+            These rows are filed under <b>{data.period}</b> but carry dates from{' '}
+            <b>{dt(data.covers[0])} – {dt(data.covers[1])}</b>, so the axis below
+            follows the dates rather than the month. Usually it means a workbook
+            was uploaded into a different month than it was written for.
+          </span>
+        </div>
+      )}
 
       <div style={{ height: 300, width: '100%' }}>
         {error ? (

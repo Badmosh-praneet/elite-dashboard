@@ -335,11 +335,41 @@ def sales_timeline(
                 return empty
 
             step = "1 day" if grain == "day" else "1 week"
+            # The spine normally runs the length of the reporting month. But a
+            # workbook loaded into a month it was not written for carries the
+            # dates it was written with - the August DSR loaded into SEP2026
+            # holds rows dated 1-31 August - and a spine over September then
+            # matches none of them, drawing a flat zero line over real data.
+            #
+            # So: use the month's window whenever ANY dated row falls inside it
+            # (the normal case, unchanged), and fall back to the range the data
+            # actually occupies when none does. `covers` reports which, so the
+            # sheet can say what it is plotting rather than quietly lying.
             rows = cx.execute(f"""
-                WITH spine AS (
+                WITH dated AS (
+                    SELECT b.booking_date AS dt FROM booking b
+                     WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                    UNION ALL
+                    SELECT l.created_at::date FROM lead l
+                     WHERE l.is_current_period AND l.created_at IS NOT NULL
+                ),
+                bounds AS (
+                    SELECT
+                      count(*) FILTER (WHERE dt BETWEEN %s::date AND %s::date) AS inside,
+                      min(dt) AS lo, max(dt) AS hi
+                    FROM dated
+                ),
+                win AS (
+                    SELECT
+                      CASE WHEN inside > 0 OR lo IS NULL THEN %s::date ELSE lo END AS lo,
+                      CASE WHEN inside > 0 OR hi IS NULL THEN %s::date ELSE hi END AS hi,
+                      inside
+                    FROM bounds
+                ),
+                spine AS (
                     SELECT generate_series(
-                        date_trunc('{grain}', %s::date),
-                        date_trunc('{grain}', %s::date),
+                        date_trunc('{grain}', (SELECT lo FROM win)),
+                        date_trunc('{grain}', (SELECT hi FROM win)),
                         interval '{step}')::date AS bucket
                 )
                 SELECT s.bucket,
@@ -353,11 +383,22 @@ def sales_timeline(
                          WHERE b.is_current_period AND b.booking_date IS NOT NULL
                            AND date_trunc('{grain}', b.booking_date) = s.bucket) AS revenue
                 FROM spine s ORDER BY s.bucket
-            """, (p["period_start"], p["period_end"])).fetchall()
+            """, (p["period_start"], p["period_end"],
+                  p["period_start"], p["period_end"])).fetchall()
+
+            covered = [rows[0]["bucket"], rows[-1]["bucket"]] if rows else None
+            outside = bool(covered and (covered[0] < p["period_start"]
+                                        or covered[1] > p["period_end"]))
 
             return {
                 "grain": grain,
                 "period": p["label"],
+                "period_range": [p["period_start"].isoformat(), p["period_end"].isoformat()],
+                "covers": [covered[0].isoformat(), covered[1].isoformat()] if covered else None,
+                # True when the rows filed under this month carry dates from
+                # outside it - the sheet says so rather than showing a chart
+                # whose axis silently disagrees with its title.
+                "dates_outside_period": outside,
                 "buckets": [{
                     "key": r["bucket"].isoformat(),
                     "label": r["bucket"].isoformat(),

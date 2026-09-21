@@ -258,7 +258,7 @@ export const uploadExcelWorkbook = uploadReportFile;
 export async function uploadWorkbookInBackground(
   file, period, uploadedBy, onProgress, opts = {},
 ) {
-  const { mode = "replace", covers = "month", coversDate } = opts;
+  const { mode = "replace", covers = "month", coversDate, coversDateEnd } = opts;
   const formData = new FormData();
   formData.append("file", file);
   if (period) formData.append("period", period);
@@ -267,6 +267,9 @@ export async function uploadWorkbookInBackground(
   formData.append("covers", covers);
   // Only sent for a day or a week; the server derives the month from it.
   if (coversDate) formData.append("covers_date", coversDate);
+  // The far end of a week. Recorded with the load so the run is traceable to
+  // the span the dealership said it covers.
+  if (coversDateEnd) formData.append("covers_date_end", coversDateEnd);
 
   let res;
   try {

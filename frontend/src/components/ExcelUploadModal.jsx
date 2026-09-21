@@ -18,6 +18,9 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   const [mode, setMode] = useState('replace');
   const [covers, setCovers] = useState('month');
   const [coversDate, setCoversDate] = useState('');
+  // A week is a span, not a point: the client says which dates it runs from
+  // and to, rather than us guessing the week around a single date.
+  const [coversDateEnd, setCoversDateEnd] = useState('');
   // What the month being uploaded into currently holds. An upload REPLACES that
   // month rather than adding to it, which is the right behaviour but invisible
   // -- so the modal says it, with the real figures, before anyone commits.
@@ -103,7 +106,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
       const data = isWorkbook
         ? await uploadWorkbookInBackground(file, period, uploader,
             job => setStep(job.step || job.state || ''),
-            { mode: effectiveMode, covers, coversDate })
+            { mode: effectiveMode, covers, coversDate, coversDateEnd })
         : await uploadReportFile(file, period, uploader, tableType);
       setResult(data);
       onUploadComplete(
@@ -122,7 +125,15 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   // month, so day and week are append-only and the control says so.
   const effectiveMode = covers === 'month' ? mode : 'append';
   const needsDate = covers !== 'month';
-  const dateMissing = needsDate && !coversDate;
+  const needsRange = covers === 'week';
+  const dateMissing = (needsDate && !coversDate) || (needsRange && !coversDateEnd);
+  // Caught here rather than at the server, so the person fixes it while the
+  // dates are in front of them.
+  const rangeBackwards = needsRange && coversDate && coversDateEnd
+                         && coversDateEnd < coversDate;
+  const rangeCrossesMonths = needsRange && coversDate && coversDateEnd
+                             && !rangeBackwards
+                             && coversDate.slice(0, 7) !== coversDateEnd.slice(0, 7);
 
   const badge = file ? getFormatBadge(file.name) : null;
   const BadgeIcon = badge?.icon || FileSpreadsheet;
@@ -282,15 +293,55 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                 </button>
               ))}
             </div>
-            {needsDate && (
+            {covers === 'day' && (
               <label className="field" style={{ margin: 0 }}>
-                <span>
-                  {covers === 'day' ? 'Date this file covers' : 'Any date inside that week'}
-                  {' '}<em>— it is filed under that month</em>
-                </span>
+                <span>Date this file covers <em>— it is filed under that month</em></span>
                 <input type="date" value={coversDate}
                        onChange={e => setCoversDate(e.target.value)} />
               </label>
+            )}
+
+            {needsRange && (
+              <>
+                <div className="row-2">
+                  <label className="field" style={{ margin: 0 }}>
+                    <span>Week from</span>
+                    <input
+                      type="date"
+                      value={coversDate}
+                      onChange={e => {
+                        const from = e.target.value;
+                        setCoversDate(from);
+                        // Offer the obvious seven-day week, still editable —
+                        // a dealership week is not always Monday to Sunday.
+                        if (from && !coversDateEnd) {
+                          const d = new Date(`${from}T00:00:00Z`);
+                          d.setUTCDate(d.getUTCDate() + 6);
+                          setCoversDateEnd(d.toISOString().slice(0, 10));
+                        }
+                      }}
+                    />
+                  </label>
+                  <label className="field" style={{ margin: 0 }}>
+                    <span>Week to</span>
+                    <input type="date" value={coversDateEnd} min={coversDate || undefined}
+                           onChange={e => setCoversDateEnd(e.target.value)} />
+                  </label>
+                </div>
+                {rangeBackwards && (
+                  <div style={{ fontSize: 11.5, color: 'var(--critical)', marginTop: 6 }}>
+                    The end date is before the start date.
+                  </div>
+                )}
+                {rangeCrossesMonths && (
+                  <div style={{ fontSize: 11.5, color: 'var(--warning)', marginTop: 6 }}>
+                    This week spans two months. It will be filed under{' '}
+                    <b>{new Date(`${coversDate}T00:00:00Z`).toLocaleDateString('en-IN',
+                        { month: 'long', year: 'numeric', timeZone: 'UTC' })}</b>,
+                    the month it starts in.
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -453,7 +504,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           <button
             className="primary"
             onClick={handleUpload}
-            disabled={!file || loading || dateMissing}
+            disabled={!file || loading || dateMissing || rangeBackwards}
             title={dateMissing ? `Pick the ${covers} this file covers` : undefined}
             style={{ background: 'var(--s3)', borderColor: 'var(--s3)' }}
           >

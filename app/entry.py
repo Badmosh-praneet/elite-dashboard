@@ -611,7 +611,8 @@ async def start_upload(
     uploaded_by: str = Form("Reporting Agent"),
     mode: str = Form("replace", description="replace the month, or append to it"),
     covers: str = Form("month", description="what the file covers: day, week or month"),
-    covers_date: str | None = Form(None, description="a date inside that day or week (YYYY-MM-DD)"),
+    covers_date: str | None = Form(None, description="the day, or the first day of the week (YYYY-MM-DD)"),
+    covers_date_end: str | None = Form(None, description="the last day of the week (YYYY-MM-DD)"),
 ):
     """
     Accept a workbook and ingest it in the background.
@@ -645,6 +646,19 @@ async def start_upload(
             on = date.fromisoformat(covers_date)
         except ValueError:
             raise HTTPException(400, f"'{covers_date}' is not a date (expected YYYY-MM-DD).")
+
+        covers_to = on
+        if covers == "week" and covers_date_end:
+            try:
+                covers_to = date.fromisoformat(covers_date_end)
+            except ValueError:
+                raise HTTPException(400, f"'{covers_date_end}' is not a date (expected YYYY-MM-DD).")
+            if covers_to < on:
+                raise HTTPException(400, "The week's end date is before its start date.")
+
+        # A week that straddles a month boundary is filed under the month it
+        # STARTS in. Splitting it across two periods would mean two partial
+        # loads whose targets and scorecards each belong to neither month.
         period_label, period_start, period_end = _resolve_period(
             f"{_MONTH_ABBR[on.month]}{on.year}", fname)
         mode = "append"
@@ -653,7 +667,8 @@ async def start_upload(
 
     job_id = uuid.uuid4().hex
     _job_set(job_id, state="queued", step="queued", filename=fname,
-             period=period_label, started_at=time.time())
+             period=period_label, started_at=time.time(), mode=mode, covers=covers,
+             covers_from=covers_date, covers_to=(covers_date_end or covers_date))
     threading.Thread(
         target=_ingest_worker,
         args=(job_id, content, fname, period_label, period_start, period_end,
@@ -663,7 +678,8 @@ async def start_upload(
     ).start()
 
     return {"job_id": job_id, "state": "queued", "period": period_label,
-            "filename": fname, "mode": mode, "covers": covers}
+            "filename": fname, "mode": mode, "covers": covers,
+            "covers_from": covers_date, "covers_to": covers_date_end or covers_date}
 
 
 @router.get("/api/upload-report/status/{job_id}", tags=["ingestion"])

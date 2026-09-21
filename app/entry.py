@@ -50,6 +50,10 @@ PERIOD_TARGET_TABLES = [
     "target_channel_funnel", "target_consultant_scorecard",
 ]
 
+# Month number -> the three-letter form the period labels use (AUG2026).
+_MONTH_ABBR = {1: "JAN", 2: "FEB", 3: "MAR", 4: "APR", 5: "MAY", 6: "JUN",
+               7: "JUL", 8: "AUG", 9: "SEP", 10: "OCT", 11: "NOV", 12: "DEC"}
+
 MONTH_MAP = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
     "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
@@ -552,7 +556,8 @@ def _job_get(job_id: str) -> dict | None:
 
 
 def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
-                   period_start: date, period_end: date, uploaded_by: str) -> None:
+                   period_start: date, period_end: date, uploaded_by: str,
+                   mode: str = "replace") -> None:
     """Runs off the request thread. Only ever writes its result into _JOBS."""
     try:
         _job_set(job_id, state="running", step="parsing the workbook")
@@ -560,14 +565,14 @@ def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
 
         _job_set(job_id, step="writing to the database")
         with db_connect(autocommit=True) as cx:
-            loader = Loader(cx, wb, period_label, period_start, period_end)
+            loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
             counts = loader.run()
             cx.execute("""
                 INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
                 VALUES (%s, now(), now(), %s, %s)
             """, (
                 fname, json.dumps(counts),
-                f"Uploaded by {uploaded_by}"
+                f"Uploaded by {uploaded_by} ({mode})"
                 + (("; " + "; ".join(loader.warnings)) if loader.warnings else ""),
             ))
 
@@ -581,7 +586,10 @@ def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
                  warnings=loader.warnings,
                  result={
                      "status": "success",
-                     "message": f"Successfully ingested '{fname}' for {period_label}.",
+                     "message": (f"Added '{fname}' to {period_label}."
+                                 if mode == "append" else
+                                 f"Successfully ingested '{fname}' for {period_label}."),
+                     "mode": mode,
                      "filename": fname,
                      "file_type": "excel",
                      "period": period_label,
@@ -601,6 +609,9 @@ async def start_upload(
     file: UploadFile = File(..., description="DSR workbook (.xlsx, .xlsm)"),
     period: str | None = Form(None),
     uploaded_by: str = Form("Reporting Agent"),
+    mode: str = Form("replace", description="replace the month, or append to it"),
+    covers: str = Form("month", description="what the file covers: day, week or month"),
+    covers_date: str | None = Form(None, description="a date inside that day or week (YYYY-MM-DD)"),
 ):
     """
     Accept a workbook and ingest it in the background.
@@ -619,19 +630,40 @@ async def start_upload(
     if not is_db_ready():
         raise HTTPException(503, "The database is not reachable.")
 
-    period_label, period_start, period_end = _resolve_period(period, fname)
+    mode = mode if mode in ("replace", "append") else "replace"
+    covers = covers if covers in ("day", "week", "month") else "month"
+
+    # A day or a week is still filed under the month it falls in: dim_period is
+    # monthly, and every view, target and KPI is scoped that way. What the
+    # choice changes is which month is picked (from the date rather than from a
+    # label) and that appending is the only sane pairing - replacing a whole
+    # month with one day's file would delete the rest of the month.
+    if covers in ("day", "week"):
+        if not covers_date:
+            raise HTTPException(400, f"Uploading a {covers} needs the date it covers.")
+        try:
+            on = date.fromisoformat(covers_date)
+        except ValueError:
+            raise HTTPException(400, f"'{covers_date}' is not a date (expected YYYY-MM-DD).")
+        period_label, period_start, period_end = _resolve_period(
+            f"{_MONTH_ABBR[on.month]}{on.year}", fname)
+        mode = "append"
+    else:
+        period_label, period_start, period_end = _resolve_period(period, fname)
 
     job_id = uuid.uuid4().hex
     _job_set(job_id, state="queued", step="queued", filename=fname,
              period=period_label, started_at=time.time())
     threading.Thread(
         target=_ingest_worker,
-        args=(job_id, content, fname, period_label, period_start, period_end, uploaded_by),
+        args=(job_id, content, fname, period_label, period_start, period_end,
+              uploaded_by, mode),
         daemon=True,
         name=f"ingest-{job_id[:8]}",
     ).start()
 
-    return {"job_id": job_id, "state": "queued", "period": period_label, "filename": fname}
+    return {"job_id": job_id, "state": "queued", "period": period_label,
+            "filename": fname, "mode": mode, "covers": covers}
 
 
 @router.get("/api/upload-report/status/{job_id}", tags=["ingestion"])
@@ -738,7 +770,7 @@ async def upload_dsr_workbook(
     if is_db_ready():
         try:
             with db_connect(autocommit=True) as cx:
-                loader = Loader(cx, wb, period_label, period_start, period_end)
+                loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
                 counts = loader.run()
                 cx.execute("""
                     INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)

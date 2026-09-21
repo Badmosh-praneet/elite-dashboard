@@ -255,11 +255,18 @@ export const uploadExcelWorkbook = uploadReportFile;
  *
  * `onProgress(state)` fires on each poll so the modal can say where it is.
  */
-export async function uploadWorkbookInBackground(file, period, uploadedBy, onProgress) {
+export async function uploadWorkbookInBackground(
+  file, period, uploadedBy, onProgress, opts = {},
+) {
+  const { mode = "replace", covers = "month", coversDate } = opts;
   const formData = new FormData();
   formData.append("file", file);
   if (period) formData.append("period", period);
   if (uploadedBy) formData.append("uploaded_by", uploadedBy);
+  formData.append("mode", mode);
+  formData.append("covers", covers);
+  // Only sent for a day or a week; the server derives the month from it.
+  if (coversDate) formData.append("covers_date", coversDate);
 
   let res;
   try {

@@ -13,6 +13,11 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   const [dragOver, setDragOver] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [step, setStep] = useState('');
+  // How this file should meet the month already in the database, and what
+  // slice of time it covers.
+  const [mode, setMode] = useState('replace');
+  const [covers, setCovers] = useState('month');
+  const [coversDate, setCoversDate] = useState('');
   // What the month being uploaded into currently holds. An upload REPLACES that
   // month rather than adding to it, which is the right behaviour but invisible
   // -- so the modal says it, with the real figures, before anyone commits.
@@ -97,16 +102,27 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
       const isWorkbook = /\.(xlsx|xlsm|xls)$/i.test(file.name);
       const data = isWorkbook
         ? await uploadWorkbookInBackground(file, period, uploader,
-            job => setStep(job.step || job.state || ''))
+            job => setStep(job.step || job.state || ''),
+            { mode: effectiveMode, covers, coversDate })
         : await uploadReportFile(file, period, uploader, tableType);
       setResult(data);
-      onUploadComplete(`${data.period} replaced from '${data.filename}'`, data);
+      onUploadComplete(
+        data.mode === 'append'
+          ? `${data.filename} added to ${data.period}`
+          : `${data.period} replaced from '${data.filename}'`,
+        data);
     } catch (err) {
       setError(err.message || 'Ingestion failed');
     } finally {
       setLoading(false);
     }
   };
+
+  // Replacing a whole month with one day's file would delete the rest of the
+  // month, so day and week are append-only and the control says so.
+  const effectiveMode = covers === 'month' ? mode : 'append';
+  const needsDate = covers !== 'month';
+  const dateMissing = needsDate && !coversDate;
 
   const badge = file ? getFormatBadge(file.name) : null;
   const BadgeIcon = badge?.icon || FileSpreadsheet;
@@ -136,7 +152,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           <div>
             <h2 style={{ fontSize: '16px' }}>Ingest DSR Report</h2>
             <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--ink-muted)' }}>
-              Loads bookings, stock, enquiries and targets for one month. Uploading replaces that month.
+              Loads bookings, stock, enquiries and targets. Choose below whether it
+              replaces the month or is added to it.
             </p>
           </div>
           <button onClick={onClose} style={{ padding: '6px', borderRadius: '50%' }}>
@@ -196,6 +213,87 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
             />
           </div>
 
+          {/* How this file meets the month already in the database. */}
+          <div>
+            <div style={{
+              fontSize: 12, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
+            }}>How to apply it</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {[
+                { key: 'replace', title: 'Replace the month',
+                  note: 'Clears what is there and loads this file in its place' },
+                { key: 'append', title: 'Add to the month',
+                  note: 'Keeps what is there and adds these rows' },
+              ].map(o => {
+                const on = effectiveMode === o.key;
+                const locked = covers !== 'month' && o.key === 'replace';
+                return (
+                  <button
+                    key={o.key}
+                    type="button"
+                    onClick={() => !locked && setMode(o.key)}
+                    disabled={locked}
+                    title={locked ? 'A day or a week can only be added to its month' : o.note}
+                    style={{
+                      flex: 1, flexDirection: 'column', alignItems: 'flex-start',
+                      gap: 3, padding: '10px 12px', textAlign: 'left',
+                      background: on ? 'var(--s1-light)' : 'var(--surface-sub)',
+                      borderColor: on ? 'var(--s1)' : 'var(--border)',
+                      opacity: locked ? 0.45 : 1,
+                      cursor: locked ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <b style={{ fontSize: 12.5, color: on ? 'var(--s1)' : 'var(--ink)' }}>
+                      {o.title}
+                    </b>
+                    <span style={{ fontSize: 11, color: 'var(--ink-muted)', lineHeight: 1.4 }}>
+                      {o.note}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* What slice of time the file covers. dim_period is monthly, so a
+              day or a week is filed under the month it falls in - the date
+              chooses that month, and appending is the only safe pairing. */}
+          <div>
+            <div style={{
+              fontSize: 12, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
+            }}>This file covers</div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: needsDate ? 10 : 0 }}>
+              {['day', 'week', 'month'].map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCovers(c)}
+                  aria-pressed={covers === c}
+                  style={{
+                    flex: 1, textTransform: 'capitalize', padding: '7px 10px',
+                    fontSize: 12.5,
+                    background: covers === c ? 'var(--s1-light)' : 'var(--surface-sub)',
+                    borderColor: covers === c ? 'var(--s1)' : 'var(--border)',
+                    color: covers === c ? 'var(--s1)' : 'var(--ink-2)',
+                    fontWeight: covers === c ? 700 : 500,
+                  }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            {needsDate && (
+              <label className="field" style={{ margin: 0 }}>
+                <span>
+                  {covers === 'day' ? 'Date this file covers' : 'Any date inside that week'}
+                  {' '}<em>— it is filed under that month</em>
+                </span>
+                <input type="date" value={coversDate}
+                       onChange={e => setCoversDate(e.target.value)} />
+              </label>
+            )}
+          </div>
+
           <div className="row-2">
             <label className="field" style={{ margin: 0 }}>
               <span>Target Data Type</span>
@@ -230,6 +328,13 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   <b>{replacing.label}</b> is a new month. Nothing will be replaced.
                 </>
               ) : (
+                effectiveMode === 'append' ? (
+                <>
+                  This <b>adds to</b> <b>{replacing.label}</b>, which currently holds{' '}
+                  {n0(replacing.total)} rows. Nothing existing is removed. Rows identical
+                  to ones already there are skipped, so re-sending the same file is safe.
+                </>
+              ) : (
                 <>
                   This <b>replaces</b> everything currently in <b>{replacing.label}</b>
                   {replacing.total > 0
@@ -247,7 +352,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                     </div>
                   )}
                 </>
-              )}
+              ))}
             </div>
           )}
 
@@ -348,7 +453,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           <button
             className="primary"
             onClick={handleUpload}
-            disabled={!file || loading}
+            disabled={!file || loading || dateMissing}
+            title={dateMissing ? `Pick the ${covers} this file covers` : undefined}
             style={{ background: 'var(--s3)', borderColor: 'var(--s3)' }}
           >
             <UploadCloud size={15} />

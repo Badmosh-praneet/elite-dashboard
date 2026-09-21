@@ -55,9 +55,14 @@ PERIOD_TARGETS = [
 
 class Loader:
     def __init__(self, conn: psycopg.Connection, wb, period_label: str,
-                 period_start: date, period_end: date):
+                 period_start: date, period_end: date, mode: str = "replace"):
         self.cx = conn
         self.wb = wb
+        # "replace" rebuilds the month from this workbook, which is right for a
+        # monthly DSR. "append" adds to what is already there, for a dealership
+        # uploading a day or a week at a time - the month accumulates instead of
+        # being overwritten by its own latest slice.
+        self.mode = mode if mode in ("replace", "append") else "replace"
         self.period_label = period_label
         self.period_start = period_start
         self.period_end = period_end
@@ -812,6 +817,58 @@ class Loader:
 
     # -----------------------------------------------------------------
 
+    # The primary key of each fact table, and the columns that make a row the
+    # same real-world event. Identity, not equality: two different customers
+    # can share a name, but the same customer, car and date on two rows is the
+    # same booking uploaded twice.
+    _PKS = {
+        "lead": "lead_id", "booking": "booking_id", "test_drive": "test_drive_id",
+        "allotment": "allotment_id", "registration": "registration_id",
+    }
+    _IDENTITY = {
+        "lead":        ["lead_name", "mobile", "created_at", "model_of_interest"],
+        "booking":     ["customer_name", "mobile", "booking_date", "model_id", "variant_id"],
+        "test_drive":  ["lead_name", "mobile", "td_date", "model_of_interest"],
+        "allotment":   ["vehicle_id", "booking_id"],
+        "registration": ["customer_name", "chassis_number"],
+    }
+
+    def _pk(self, table: str) -> str:
+        return self._PKS[table]
+
+    def _dedupe_appended(self) -> None:
+        """
+        Drop rows this append added that already existed.
+
+        Appending is for a dealership uploading a day or a week at a time, and
+        the obvious accident is uploading the same slice twice - a double click,
+        a retry after a timeout, the same file sent on Monday and again on
+        Tuesday. Without this that silently doubles the month.
+
+        Only rows created by THIS load are considered (id above the mark taken
+        in reset()), and one is removed only when an identical row already sat
+        below the mark. A genuinely new row is never touched.
+        """
+        marks = getattr(self, "_marks", None)
+        if not marks:
+            return
+        for table, mark in marks.items():
+            cols = self._IDENTITY.get(table)
+            if not cols:
+                continue
+            pk = self._pk(table)
+            match = " AND ".join(
+                f"(new.{c} IS NOT DISTINCT FROM old.{c})" for c in cols)
+            removed = self.cx.execute(f"""
+                DELETE FROM {table} new
+                 WHERE new.{pk} > %s
+                   AND new.origin = 'WORKBOOK'
+                   AND EXISTS (SELECT 1 FROM {table} old
+                                WHERE old.{pk} <= %s AND {match})
+            """, (mark, mark)).rowcount
+            if removed:
+                self.counts[f"{table}_already_present"] = removed
+
     def reset(self):
         """
         Clear what THIS load is about to rebuild - this period, and nothing else.
@@ -828,6 +885,20 @@ class Loader:
         filter on, so a reload can delete exactly its own previous output.
         Rows the dealership typed in (origin = 'MANUAL') are never touched.
         """
+        if self.mode == "append":
+            # Nothing is cleared. The high-water marks below are what lets the
+            # append de-duplicate itself afterwards: anything this load adds
+            # that is identical to a row already present gets dropped again, so
+            # re-uploading the same file is harmless rather than doubling the
+            # month. Without that, one accidental second click silently doubles
+            # every figure on the sheet.
+            self._marks = {
+                t: (self.one(f"SELECT COALESCE(max({self._pk(t)}), 0) FROM {t}"))
+                for t in WORKBOOK_FACTS
+            }
+            self.counts["mode"] = "append"
+            return
+
         for table in WORKBOOK_FACTS:
             deleted = self.cx.execute(
                 f"DELETE FROM {table} "
@@ -874,6 +945,8 @@ class Loader:
         self.load_channel_funnel()
         self.load_booking_commitments()
         self.load_daily_tracker()
+        if self.mode == "append":
+            self._dedupe_appended()
         self.link_bookings_to_vehicles()
         self.stamp_load()
         # load_period() flips dim_period.is_active, but the fact tables carry

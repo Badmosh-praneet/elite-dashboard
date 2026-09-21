@@ -182,6 +182,10 @@ CREATE TABLE lead (
     trade_in            boolean,
     trade_in_vehicle    text,
     dealership          text,
+    -- What the customer actually wrote. Enquiries arriving from the chat agent
+    -- carry a subject and a message, and there was nowhere to keep them - so
+    -- the substance of the enquiry was dropped and only the contact kept.
+    enquiry_note        text,
     period_id           smallint REFERENCES dim_period(period_id),
     -- provenance: MANUAL rows survive a workbook reload, WORKBOOK rows do not
     origin                    row_origin NOT NULL DEFAULT 'WORKBOOK',

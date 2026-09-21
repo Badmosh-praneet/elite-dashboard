@@ -187,6 +187,123 @@ active month to match the month leads are arriving in.
 
 ---
 
+## 2b. Easiest path: give Perfox a webhook URL
+
+Section 2 is a typed API: it insists on `lead_name`, calls the phone
+`phone_number`, and rejects anything shaped differently. That is fine when
+something is *written* to call it — but an agent platform that offers a
+"send this somewhere when a form is submitted" setting sends **its own** JSON,
+under its own field names, and gives you nowhere to write a mapping step.
+
+This endpoint exists for that case. It takes the enquiry in whatever shape it
+arrives and works out which field is the name and which is the phone.
+
+**Endpoint**: `POST /api/webhooks/enquiry`
+
+Paste this into the agent's webhook / "post submission to URL" setting:
+
+```
+https://elite-dashboard1.onrender.com/api/webhooks/enquiry
+```
+
+Opening that URL in a browser (a `GET`) returns a short description rather than
+an error, so you can confirm it is live before saving it.
+
+### It accepts any of these
+
+All four of these file the same lead. Field names are matched with case and
+punctuation ignored, so `Full Name`, `full_name` and `fullName` are one key.
+
+```json
+{"Full Name": "Asha Menon", "Mobile Number": "+91 98765 43210",
+ "Email Address": "asha@example.com", "Subject": "Tiguan price",
+ "Message": "Please call me back"}
+
+{"full_name": "Asha Menon", "phone_number": "9876543210"}
+
+{"event": "form.submitted", "data": {"name": "Asha Menon", "phone": "9876543210"}}
+
+{"fields": [{"label": "Full Name",     "value": "Asha Menon"},
+            {"label": "Mobile Number", "value": "9876543210"}]}
+```
+
+Recognised: name, email, phone/mobile, subject, message, model, and a timestamp.
+Subject and message are kept together on the lead as the enquiry note — the
+substance of what the customer asked, which section 2 has nowhere to put.
+
+A payload with **neither** a name nor a phone number is rejected with `422`, so a
+mis-wired mapping shows up in the agent's delivery log instead of quietly filing
+blank rows.
+
+### Response
+
+```json
+{
+  "status": "success",
+  "duplicate": false,
+  "lead_id": 104469,
+  "period": "AUG2026",
+  "in_active_period": true,
+  "visible_on_dashboard": true,
+  "received": {"name": "Asha Menon", "phone": "9876543210", ...}
+}
+```
+
+`visible_on_dashboard` is the field to watch. When it is `false` the reply also
+carries a `warning` saying which month the lead went to and what to do about it —
+see *Which month do live enquiries land in?* below.
+
+### Delivered twice is still one lead
+
+Webhook providers retry when they do not get a prompt `2xx`. An identical
+delivery (same name and mobile) within 10 minutes returns the **original**
+`lead_id` with `"duplicate": true` instead of inserting a second row, so a retry
+storm cannot triple the enquiry count.
+
+### Securing it
+
+This route writes and is reachable from the internet. Set a secret:
+
+```
+WEBHOOK_SECRET=some-long-random-string
+```
+
+It is then accepted as `X-Webhook-Secret: <secret>`, as
+`Authorization: Bearer <secret>`, or — for setup screens that let you set nothing
+but a URL — as `?token=<secret>` on the end of the URL. With `WEBHOOK_SECRET`
+unset the route is open, which is deliberate: paste the URL, watch it work, then
+lock it down.
+
+### Which month do live enquiries land in?
+
+By default the month the enquiry's own date falls in — the same rule the rest of
+the system follows. That is correct, and it has a sharp edge: the dashboard shows
+exactly one active month, so an enquiry arriving today while the dashboard reports
+on an earlier month is stored correctly and **displayed nowhere**.
+
+If you want enquiries to appear on screen as they arrive, set:
+
+```
+AGENT_LEAD_PERIOD=active
+```
+
+Incoming enquiries are then filed into whichever month the dashboard is showing.
+It is off by default because it is a reporting choice, not a correctness fix.
+
+### Leads from here survive the monthly upload
+
+They are written with `origin = MANUAL`. A workbook re-upload in replace mode
+deletes only `origin = WORKBOOK` rows, so enquiries captured by the agent are not
+swept away by the next monthly import.
+
+### Testing it
+
+```bash
+curl -X POST https://elite-dashboard1.onrender.com/api/webhooks/enquiry   -H "Content-Type: application/json"   -d '{"Full Name": "Webhook Test", "Mobile Number": "9876500000", "Message": "testing"}'
+```
+
+---
+
 ## 3. Fetch Bookings
 
 Answers "what has <customer> ordered", "which orders are awaiting a car", "what

@@ -87,3 +87,104 @@ BEGIN
             spec.tbl || '_notify_truncate', spec.tbl, spec.pk);
     END LOOP;
 END $$;
+
+
+-- ---------------------------------------------------------------------
+-- Make an enquiry written straight into Supabase show up on the dashboard.
+--
+-- The chat agent is connected to Supabase directly, so it writes through
+-- PostgREST, which only exposes `public`. `public.lead` is an auto-updatable
+-- view over `dsr.lead`, so the agent's INSERT already succeeds today - and the
+-- row is invisible. A naive insert supplies a name and a phone and nothing
+-- else, so the row lands with period_id NULL, created_at NULL and
+-- is_current_period false, and every headline view is scoped
+-- `WHERE is_current_period`. The agent is told "success" and the dashboard
+-- never moves.
+--
+-- The fix belongs on the view, not the table. The ETL sets search_path to
+-- `dsr, public`, so the loader's INSERTs resolve to dsr.lead and never pass
+-- through here - which matters, because the loader deliberately inserts the
+-- 2024 historical dump with period_id NULL. Filling that in on the base table
+-- would file 1,787 archive rows into 2024 reporting months that should not
+-- exist. On the view, only writes arriving from outside are touched.
+-- ---------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION dsr.lead_insert_from_api() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    d    date;
+    pid  smallint;
+    act  boolean;
+BEGIN
+    -- An enquiry with no date is one that just came in.
+    NEW.created_at := coalesce(NEW.created_at, now());
+    d := NEW.created_at::date;
+
+    IF NEW.period_id IS NULL THEN
+        SELECT period_id, is_active INTO pid, act
+          FROM dsr.dim_period
+         WHERE d BETWEEN period_start AND period_end
+         LIMIT 1;
+
+        -- First enquiry of a month the dealership has not opened yet: create
+        -- the month rather than dropping the lead. Same rule as period_for().
+        IF pid IS NULL THEN
+            INSERT INTO dsr.dim_period (label, period_start, period_end)
+            VALUES (upper(to_char(d, 'MON')) || to_char(d, 'YYYY'),
+                    date_trunc('month', d)::date,
+                    (date_trunc('month', d) + interval '1 month'
+                                            - interval '1 day')::date)
+            ON CONFLICT (label) DO UPDATE SET label = EXCLUDED.label
+            RETURNING period_id, is_active INTO pid, act;
+        END IF;
+
+        NEW.period_id := pid;
+    END IF;
+
+    -- Visible exactly when the lead belongs to the month being reported on.
+    IF NEW.is_current_period IS NULL THEN
+        SELECT is_active INTO act FROM dsr.dim_period
+         WHERE period_id = NEW.period_id;
+        NEW.is_current_period := coalesce(act, false);
+    END IF;
+
+    INSERT INTO dsr.lead (
+        lead_id, lead_record_id, created_at, lead_name, mobile, email,
+        source_id, lead_type, model_of_interest, variant_of_interest,
+        colour_of_interest, model_id, lead_owner, consultant_id, lead_status,
+        rating, qualified_stage, test_drive_given, trade_in, trade_in_vehicle,
+        dealership, period_id, origin, loaded_at, updated_at, entered_by,
+        is_current_period)
+    VALUES (
+        coalesce(NEW.lead_id, nextval('dsr.lead_lead_id_seq')),
+        NEW.lead_record_id, NEW.created_at, NEW.lead_name, NEW.mobile,
+        NEW.email, NEW.source_id, NEW.lead_type, NEW.model_of_interest,
+        NEW.variant_of_interest, NEW.colour_of_interest, NEW.model_id,
+        NEW.lead_owner, NEW.consultant_id,
+        coalesce(NEW.lead_status, 'New'),
+        NEW.rating,
+        coalesce(NEW.qualified_stage, 'New'),
+        NEW.test_drive_given, NEW.trade_in, NEW.trade_in_vehicle,
+        NEW.dealership, NEW.period_id,
+        -- MANUAL, not the WORKBOOK default. reset() deletes only
+        -- origin = 'WORKBOOK', so an enquiry left as WORKBOOK would be
+        -- silently deleted by the next monthly upload.
+        coalesce(NEW.origin, 'MANUAL'),
+        coalesce(NEW.loaded_at, now()),
+        coalesce(NEW.updated_at, now()),
+        coalesce(NEW.entered_by, 'agent'),
+        NEW.is_current_period);
+
+    RETURN NEW;
+END $$;
+
+COMMENT ON FUNCTION dsr.lead_insert_from_api() IS
+  'Fills in the reporting month, the visibility flag and MANUAL provenance for
+   leads written through public.lead - the path the chat agent uses via
+   Supabase. Without it an agent enquiry is stored correctly and displayed
+   nowhere.';
+
+DROP TRIGGER IF EXISTS lead_insert_instead ON public.lead;
+CREATE TRIGGER lead_insert_instead
+    INSTEAD OF INSERT ON public.lead
+    FOR EACH ROW EXECUTE FUNCTION dsr.lead_insert_from_api();

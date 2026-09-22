@@ -128,17 +128,26 @@ $$;
 -- The trim a customer names, in the spelling the sheets already use. Only the
 -- named lines are matched; "Sport" is deliberately absent, because "Taigun
 -- Sport" is a model line rather than a trim and would mislabel every one.
+--
+-- Nothing is derived when more than one matches. A dropdown label that lists
+-- what is on offer - "Taigun Sport (GT Line / GT Plus Sport)" - is a menu, not
+-- a choice, and reading the first match out of it invented a trim the customer
+-- never picked.
 CREATE OR REPLACE FUNCTION dsr.trim_from_text(t text) RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
-    SELECT CASE
-        WHEN upper(t) LIKE '%GT PLUS%'     THEN 'GT Plus'
-        WHEN upper(t) LIKE '%GT LINE%'     THEN 'GT Line'
-        WHEN upper(t) LIKE '%COMFORTLINE%' THEN 'Comfortline'
-        WHEN upper(t) LIKE '%HIGHLINE%'    THEN 'Highline'
-        WHEN upper(t) LIKE '%TOPLINE%'     THEN 'Topline'
-        WHEN upper(t) LIKE '%TRENDLINE%'   THEN 'Trendline'
-        ELSE NULL END;
+    WITH hit AS (
+        SELECT v.trim_name
+          FROM (VALUES ('GT Plus',     '%GT PLUS%'),
+                       ('GT Line',     '%GT LINE%'),
+                       ('Comfortline', '%COMFORTLINE%'),
+                       ('Highline',    '%HIGHLINE%'),
+                       ('Topline',     '%TOPLINE%'),
+                       ('Trendline',   '%TRENDLINE%')) AS v(trim_name, pat)
+         WHERE upper(t) LIKE v.pat
+    )
+    SELECT trim_name FROM hit WHERE (SELECT count(*) FROM hit) = 1;
 $$;
+
 
 -- A colour the dealership actually stocks, if the customer named one. Longest
 -- match wins, so "Wild Cherry Red Metallic" is not truncated to "Wild Cherry

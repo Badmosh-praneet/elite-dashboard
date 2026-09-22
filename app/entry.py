@@ -565,16 +565,27 @@ def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
 
         _job_set(job_id, step="writing to the database")
         with db_connect(autocommit=True) as cx:
-            loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
-            counts = loader.run()
-            cx.execute("""
-                INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
-                VALUES (%s, now(), now(), %s, %s)
-            """, (
-                fname, json.dumps(counts),
-                f"Uploaded by {uploaded_by} ({mode})"
-                + (("; " + "; ".join(loader.warnings)) if loader.warnings else ""),
-            ))
+            # One transaction around the whole load, so a workbook that fails
+            # part way leaves the month exactly as it was.
+            #
+            # This ran on the autocommit connection alone until a replace of
+            # AUG2026 died on a missing worksheet: reset() had already deleted
+            # and committed the month's 2,154 leads, nothing was loaded in their
+            # place, and the run failed before it could even write its etl_run
+            # row - so the month was emptied and there was no record of what
+            # had done it. A replace is a delete followed by a load, and the two
+            # halves must not be separable.
+            with cx.transaction():
+                loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
+                counts = loader.run()
+                cx.execute("""
+                    INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
+                    VALUES (%s, now(), now(), %s, %s)
+                """, (
+                    fname, json.dumps(counts),
+                    f"Uploaded by {uploaded_by} ({mode})"
+                    + (("; " + "; ".join(loader.warnings)) if loader.warnings else ""),
+                ))
 
         # Tell every open dashboard, the same way a synchronous upload did.
         try:

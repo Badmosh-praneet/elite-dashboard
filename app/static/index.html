@@ -2,69 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='2' fill='%230d1524'/%3E%3Crect x='4.5' y='4.5' width='23' height='23' rx='1.5' fill='none' stroke='%23e2674a' stroke-width='2.4'/%3E%3Cpath d='M11 20.5 16 11l5 9.5' fill='none' stroke='%23e2674a' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚗</text></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0d1524" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <title>Volkswagen Elite Motors — Daily Sales Report</title>
+    <script type="module" crossorigin src="/static/assets/index-K_BWNGK0.js"></script>
+    <link rel="stylesheet" crossorigin href="/static/assets/index-DdtDixcS.css">
   </head>
   <body>
     <div id="root">
-      <!-- Painted before the bundle parses. It is the same shell the app mounts
-           into - rail on the left, sheet on the right - so the first thing on
-           screen is already the right shape and nothing jumps when React takes
-           over. No spinner: at this stage there is nothing honest to report. -->
-      <div class="boot">
-        <aside class="boot-rail">
-          <span class="boot-seal">VW</span>
-          <span class="boot-bar" style="width:74%"></span>
-          <span class="boot-bar" style="width:52%"></span>
-          <span class="boot-bar boot-gap" style="width:88%"></span>
-          <span class="boot-bar" style="width:64%"></span>
-          <span class="boot-bar" style="width:70%"></span>
-        </aside>
-        <main class="boot-sheet">
-          <span class="boot-note">Drawing the sheet</span>
-          <div class="boot-card"><span class="boot-bar" style="width:24%;height:34px"></span></div>
-          <div class="boot-tiles">
-            <div class="boot-card"></div><div class="boot-card"></div>
-            <div class="boot-card"></div><div class="boot-card"></div>
-          </div>
-        </main>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;gap:12px;color:#868e96;font-family:'Plus Jakarta Sans',system-ui,sans-serif;">
+        <div style="width:36px;height:36px;border:3px solid #004fb6;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+        <div style="font-weight:600;font-size:15px;">Loading Volkswagen Elite Motors Dashboard...</div>
       </div>
-      <style>
-        html,body{margin:0;background:#0d1524;}
-        .boot{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh;
-              font-family:'Klee One','Comic Sans MS',cursive;}
-        .boot-rail{display:flex;flex-direction:column;gap:12px;padding:30px 20px;
-                   border-right:1px solid #23334d;}
-        .boot-seal{display:inline-flex;align-items:center;justify-content:center;
-                   width:34px;height:34px;border:1.5px solid #e2674a;color:#ef8067;
-                   font-size:12px;border-radius:2px;transform:rotate(-2.5deg);
-                   margin-bottom:10px;}
-        .boot-sheet{padding:44px 40px;}
-        .boot-note{display:block;font-size:10.5px;letter-spacing:0.16em;
-                   text-transform:uppercase;color:#7c89a0;margin-bottom:22px;}
-        .boot-bar{display:block;height:10px;border-radius:2px;background:#1a2840;
-                  animation:soak 2.1s ease-in-out infinite;
-                  background-image:linear-gradient(100deg,transparent 20%,#22324c 42%,
-                    #22324c 54%,transparent 76%);
-                  background-size:260% 100%;background-repeat:no-repeat;}
-        .boot-gap{margin-top:14px}
-        .boot-card{background:#142032;border:1px solid #23334d;border-radius:4px;
-                   padding:26px 28px;min-height:92px;margin-bottom:18px;}
-        .boot-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;}
-        .boot-tiles .boot-card{min-height:120px;margin:0;}
-        @keyframes soak{0%{background-position:160% 0}100%{background-position:-60% 0}}
-        @media (max-width:1000px){.boot{grid-template-columns:minmax(0,1fr)}
-          .boot-rail{flex-direction:row;border-right:none;border-bottom:1px solid #23334d}
-          .boot-sheet{padding:24px 20px}
-          .boot-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
-        @media (prefers-reduced-motion:reduce){.boot-bar{animation:none;background-image:none}}
-      </style>
+      <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
-    <script src="/static/assets/bundle.js" onerror="this.onerror=null;this.src='/assets/bundle.js';"></script>
   </body>
 </html>

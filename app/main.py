@@ -375,6 +375,8 @@ def sales_timeline(
                         interval '{step}')::date AS bucket
                 )
                 SELECT s.bucket,
+                       (SELECT lo FROM win) AS win_lo,
+                       (SELECT hi FROM win) AS win_hi,
                        (SELECT count(*) FROM booking b
                          WHERE b.is_current_period AND b.booking_date IS NOT NULL
                            AND date_trunc('{grain}', b.booking_date) = s.bucket) AS bookings,
@@ -388,7 +390,11 @@ def sales_timeline(
             """, (p["period_start"], p["period_end"],
                   p["period_start"], p["period_end"])).fetchall()
 
-            covered = [rows[0]["bucket"], rows[-1]["bucket"]] if rows else None
+            # The window the data occupies, not the bucket keys. date_trunc(week)
+            # pulls the first bucket back to its Monday, so a September month
+            # starts its first week on 31 August - reading this off the keys
+            # flagged every Week view as straying outside its own month.
+            covered = [rows[0]["win_lo"], rows[0]["win_hi"]] if rows else None
             outside = bool(covered and (covered[0] < p["period_start"]
                                         or covered[1] > p["period_end"]))
 
@@ -412,6 +418,169 @@ def sales_timeline(
     except Exception:
         log.exception("sales timeline failed")
         return empty
+
+
+@app.get("/api/sales/trends", tags=["dashboard"])
+def sales_trends(
+    grain: str = Query("week", pattern="^(day|week)$"),
+    period: str | None = Query(None, description="Month label; defaults to the active one"),
+):
+    """
+    How the month's mix is moving - by channel, by model, and by conversion.
+
+    /api/sales/timeline answers "how much"; this answers "made up of what". The
+    headline says 262 enquiries and 46 bookings, but not that Digital is growing
+    while Walk-in flattens, or that Taigun interest is shifting to Virtus. Those
+    are the questions a sales manager actually asks of a DSR.
+
+    Only enquiries and bookings are trended, for the same reason the timeline
+    plots only those two: every date on the Reg Report tab is blank and the test
+    drive tab carries a 2024 export, so retails and test drives cannot be placed
+    on a day without inventing one. See v_data_quality.
+
+    The window is chosen exactly as the timeline chooses it - the reporting
+    month when any dated row falls inside it, and the range the data actually
+    occupies when none does - so the two panels never disagree about which dates
+    they are showing.
+    """
+    empty = {"grain": grain, "period": None, "buckets": [], "sources": [], "models": []}
+    if not is_db_ready():
+        return empty
+    try:
+        with session() as cx:
+            p = cx.execute(
+                "SELECT label, period_start, period_end FROM dim_period "
+                "WHERE upper(label) = upper(%s)" if period else
+                "SELECT label, period_start, period_end FROM dim_period WHERE is_active",
+                (period,) if period else ()).fetchone()
+            if not p:
+                return empty
+
+            step = "1 day" if grain == "day" else "1 week"
+
+            # Same rule as the timeline: prefer the month, fall back to where the
+            # data actually is. Resolved once here and passed into the queries
+            # below, so the panels cannot drift apart.
+            win = cx.execute("""
+                WITH dated AS (
+                    SELECT b.booking_date AS dt FROM booking b
+                     WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                    UNION ALL
+                    SELECT l.created_at::date FROM lead l
+                     WHERE l.is_current_period AND l.created_at IS NOT NULL
+                ),
+                bounds AS (
+                    SELECT count(*) FILTER (WHERE dt BETWEEN %s::date AND %s::date) AS inside,
+                           min(dt) AS lo, max(dt) AS hi FROM dated
+                )
+                SELECT CASE WHEN inside > 0 OR lo IS NULL THEN %s::date ELSE lo END AS lo,
+                       CASE WHEN inside > 0 OR hi IS NULL THEN %s::date ELSE hi END AS hi
+                FROM bounds
+            """, (p["period_start"], p["period_end"],
+                  p["period_start"], p["period_end"])).fetchone()
+
+            lo, hi = win["lo"], win["hi"]
+
+            totals = cx.execute(f"""
+                WITH spine AS (
+                    SELECT generate_series(date_trunc('{grain}', %s::date),
+                                           date_trunc('{grain}', %s::date),
+                                           interval '{step}')::date AS bucket
+                )
+                SELECT s.bucket,
+                       (SELECT count(*) FROM lead l
+                         WHERE l.is_current_period AND l.created_at IS NOT NULL
+                           AND date_trunc('{grain}', l.created_at) = s.bucket) AS enquiries,
+                       (SELECT count(*) FROM booking b
+                         WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                           AND date_trunc('{grain}', b.booking_date) = s.bucket) AS bookings,
+                       (SELECT COALESCE(sum(b.booking_amount), 0) FROM booking b
+                         WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                           AND date_trunc('{grain}', b.booking_date) = s.bucket) AS revenue
+                FROM spine s ORDER BY s.bucket
+            """, (lo, hi)).fetchall()
+
+            by_source = cx.execute(f"""
+                SELECT date_trunc('{grain}', l.created_at)::date AS bucket,
+                       COALESCE(src.name, 'Unattributed') AS name,
+                       count(*) AS n
+                  FROM lead l LEFT JOIN dim_lead_source src USING (source_id)
+                 WHERE l.is_current_period AND l.created_at IS NOT NULL
+                 GROUP BY 1, 2
+            """).fetchall()
+
+            by_model = cx.execute(f"""
+                SELECT date_trunc('{grain}', l.created_at)::date AS bucket,
+                       COALESCE(m.name, 'Unspecified') AS name,
+                       count(*) AS n
+                  FROM lead l LEFT JOIN dim_model m USING (model_id)
+                 WHERE l.is_current_period AND l.created_at IS NOT NULL
+                 GROUP BY 1, 2
+            """).fetchall()
+
+    except Exception:
+        log.exception("sales trends failed")
+        return empty
+
+    def fold(rows):
+        """{bucket -> {series -> count}}, plus the series ordered by total size."""
+        out, weight = {}, {}
+        for r in rows:
+            out.setdefault(r["bucket"], {})[r["name"]] = r["n"]
+            weight[r["name"]] = weight.get(r["name"], 0) + r["n"]
+        return out, [k for k, _ in sorted(weight.items(), key=lambda kv: -kv[1])]
+
+    src_map, src_order = fold(by_source)
+    mdl_map, mdl_order = fold(by_model)
+
+    # A long tail of one-lead channels turns a stacked bar into a barcode. The
+    # small ones are summed into "Other" rather than dropped, so the stack still
+    # totals the enquiry count for that bucket.
+    TOP = 6
+    src_keep, src_rest = src_order[:TOP], set(src_order[TOP:])
+    mdl_keep, mdl_rest = mdl_order[:TOP], set(mdl_order[TOP:])
+
+    def series(m, keep, rest):
+        out = {k: m.get(k, 0) for k in keep}
+        spill = sum(v for k, v in m.items() if k in rest)
+        if spill:
+            out["Other"] = spill
+        return out
+
+    buckets, running = [], 0.0
+    for r in totals:
+        rev = float(r["revenue"] or 0)
+        running += rev
+        enq, bk = r["enquiries"], r["bookings"]
+        buckets.append({
+            "key": r["bucket"].isoformat(),
+            "enquiries": enq,
+            "bookings": bk,
+            "revenue": rev,
+            "cumulative_revenue": running,
+            # Bookings per hundred enquiries in the same bucket. Null rather than
+            # zero when nothing came in, so the line breaks instead of diving to
+            # the floor on a quiet day and reading as a collapse in conversion.
+            "conversion": round(100.0 * bk / enq, 1) if enq else None,
+            "by_source": series(src_map.get(r["bucket"], {}), src_keep, src_rest),
+            "by_model": series(mdl_map.get(r["bucket"], {}), mdl_keep, mdl_rest),
+        })
+
+    # Reported from the window the data actually occupies, not from the bucket
+    # keys. date_trunc(week) pulls the first bucket back to its Monday, so a
+    # September month starts its first week on 31 August - reading the warning
+    # off the keys flagged every Week view as straying outside its own month.
+    return {
+        "grain": grain,
+        "period": p["label"],
+        "period_range": [p["period_start"].isoformat(), p["period_end"].isoformat()],
+        "covers": [lo.isoformat(), hi.isoformat()] if lo and hi else None,
+        "dates_outside_period": bool(lo and hi and (lo < p["period_start"]
+                                                    or hi > p["period_end"])),
+        "sources": src_keep + (["Other"] if src_rest else []),
+        "models": mdl_keep + (["Other"] if mdl_rest else []),
+        "buckets": buckets,
+    }
 
 
 @app.get("/api/funnel", tags=["dashboard"])

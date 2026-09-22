@@ -14,6 +14,7 @@ import SheetFooter from './components/SheetFooter';
 import Loading from './components/Loading';
 import PeriodManager from './components/PeriodManager';
 import SalesTimeline from './components/SalesTimeline';
+import Trends from './components/Trends';
 import Visualizations from './components/Visualizations';
 import Analytics from './components/Analytics';
 import { fetchDashboardData, activatePeriod, DASHBOARD_CALLS } from './api/client';
@@ -280,6 +281,8 @@ export default function App() {
         <div style={{ marginBottom: 26 }}>
           <SalesTimeline refreshKey={data?.kpi?.bookings} />
         </div>
+
+        <Trends refreshKey={data?.kpi?.bookings} />
 
       <Analytics
         orderbook={data?.orderbook || []}

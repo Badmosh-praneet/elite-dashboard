@@ -583,6 +583,114 @@ def sales_trends(
     }
 
 
+@app.get("/api/composition", tags=["dashboard"])
+def composition(period: str | None = Query(None, description="Month label; defaults to the active one")):
+    """
+    Part-to-whole cuts of the month, for the panels that read as shares.
+
+    Everything here answers "of the whole, how much is X" rather than "how many
+    X over time", which is why these are the only charts on the sheet drawn as
+    rings. The cuts were chosen because they have few enough categories to read
+    as one: the order book sits in four states, the dealership sells four model
+    families, and bookings split two ways by team and by where the car came
+    from. Colour is the exception with twelve, so it is capped.
+
+    The weekday block is not a share at all - it is here because it comes from
+    the same two tables and answers the question the shares provoke: enquiries
+    peak midweek while bookings land at the weekend, which is a staffing fact
+    rather than a sales one.
+    """
+    empty = {"period": None, "order_book": [], "by_model": [], "by_colour": [],
+             "by_origin": [], "by_team": [], "weekday": []}
+    if not is_db_ready():
+        return empty
+
+    # The sheets shout their statuses in SQL-speak. On a client-facing panel
+    # they are read by people, not by the loader.
+    LABEL = {"BOOKED": "Booked", "ALLOTED": "Allotted",
+             "NO_STOCK": "Awaiting stock", "RETAILED": "Retailed",
+             "FRESH_CAR": "Fresh car", "PUNCHED_CAR": "Punched car"}
+
+    def pairs(rows, cap=None):
+        """[{name, value}], largest first, with a capped tail folded into Other."""
+        out = [{"name": LABEL.get(r["name"], r["name"] or "Unspecified"),
+                "value": r["n"]} for r in rows]
+        out.sort(key=lambda d: -d["value"])
+        if cap and len(out) > cap:
+            spill = sum(d["value"] for d in out[cap:])
+            out = out[:cap] + ([{"name": "Other", "value": spill}] if spill else [])
+        return out
+
+    try:
+        with session() as cx:
+            p = cx.execute(
+                "SELECT label FROM dim_period WHERE upper(label) = upper(%s)" if period else
+                "SELECT label FROM dim_period WHERE is_active",
+                (period,) if period else ()).fetchone()
+            if not p:
+                return empty
+
+            order_book = cx.execute("""
+                SELECT fulfilment_status::text AS name, count(*) AS n
+                  FROM booking WHERE is_current_period
+                 GROUP BY 1
+            """).fetchall()
+
+            by_model = cx.execute("""
+                SELECT COALESCE(m.name, 'Unspecified') AS name, count(*) AS n
+                  FROM booking b LEFT JOIN dim_model m USING (model_id)
+                 WHERE b.is_current_period GROUP BY 1
+            """).fetchall()
+
+            by_colour = cx.execute("""
+                SELECT COALESCE(c.name, 'Unspecified') AS name, count(*) AS n
+                  FROM booking b LEFT JOIN dim_colour c USING (colour_id)
+                 WHERE b.is_current_period GROUP BY 1
+            """).fetchall()
+
+            by_origin = cx.execute("""
+                SELECT COALESCE(car_origin::text, 'Unspecified') AS name, count(*) AS n
+                  FROM booking WHERE is_current_period GROUP BY 1
+            """).fetchall()
+
+            by_team = cx.execute("""
+                SELECT COALESCE(t.name, 'Unassigned') AS name, count(*) AS n
+                  FROM booking b LEFT JOIN dim_team t USING (team_id)
+                 WHERE b.is_current_period GROUP BY 1
+            """).fetchall()
+
+            # One row per weekday whether or not anything happened on it, so a
+            # quiet Wednesday is a short bar rather than a missing one.
+            weekday = cx.execute("""
+                WITH d AS (SELECT generate_series(1, 7) AS dow)
+                SELECT d.dow,
+                       to_char(date '2026-01-05' + (d.dow - 1), 'Dy') AS day,
+                       (SELECT count(*) FROM lead l
+                         WHERE l.is_current_period AND l.created_at IS NOT NULL
+                           AND extract(isodow FROM l.created_at) = d.dow) AS enquiries,
+                       (SELECT count(*) FROM booking b
+                         WHERE b.is_current_period AND b.booking_date IS NOT NULL
+                           AND extract(isodow FROM b.booking_date) = d.dow) AS bookings
+                  FROM d ORDER BY d.dow
+            """).fetchall()
+
+    except Exception:
+        log.exception("composition failed")
+        return empty
+
+    return {
+        "period": p["label"],
+        "order_book": pairs(order_book),
+        "by_model": pairs(by_model),
+        # Twelve colours is a ring nobody can read; the tail is summed, not lost.
+        "by_colour": pairs(by_colour, cap=6),
+        "by_origin": pairs(by_origin),
+        "by_team": pairs(by_team),
+        "weekday": [{"day": r["day"], "enquiries": r["enquiries"],
+                     "bookings": r["bookings"]} for r in weekday],
+    }
+
+
 @app.get("/api/funnel", tags=["dashboard"])
 def funnel():
     """Enquiry to retail funnel, with the target for each stage where one is set."""

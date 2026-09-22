@@ -15,6 +15,7 @@ import Loading from './components/Loading';
 import PeriodManager from './components/PeriodManager';
 import SalesTimeline from './components/SalesTimeline';
 import Trends from './components/Trends';
+import Composition from './components/Composition';
 import Visualizations from './components/Visualizations';
 import Analytics from './components/Analytics';
 import { fetchDashboardData, activatePeriod, DASHBOARD_CALLS } from './api/client';
@@ -283,6 +284,8 @@ export default function App() {
         </div>
 
         <Trends refreshKey={data?.kpi?.bookings} />
+
+        <Composition refreshKey={data?.kpi?.bookings} />
 
       <Analytics
         orderbook={data?.orderbook || []}

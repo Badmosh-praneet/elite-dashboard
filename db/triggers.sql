@@ -158,6 +158,11 @@ BEGIN
           FROM dsr.dim_lead_source WHERE name = 'DIGITAL';
     END IF;
 
+    -- Assigned onto NEW rather than inlined, so that an INSERT through this
+    -- view can RETURNING lead_id - which is how public.enquiries learns which
+    -- lead its row became.
+    NEW.lead_id := coalesce(NEW.lead_id, nextval('dsr.lead_lead_id_seq'));
+
     INSERT INTO dsr.lead (
         lead_id, lead_record_id, created_at, lead_name, mobile, email,
         source_id, lead_type, model_of_interest, variant_of_interest,
@@ -166,7 +171,7 @@ BEGIN
         dealership, period_id, origin, loaded_at, updated_at, entered_by,
         is_current_period)
     VALUES (
-        coalesce(NEW.lead_id, nextval('dsr.lead_lead_id_seq')),
+        NEW.lead_id,
         NEW.lead_record_id, NEW.created_at, NEW.lead_name, NEW.mobile,
         NEW.email, NEW.source_id, NEW.lead_type, NEW.model_of_interest,
         NEW.variant_of_interest, NEW.colour_of_interest, NEW.model_id,
@@ -198,3 +203,83 @@ DROP TRIGGER IF EXISTS lead_insert_instead ON public.lead;
 CREATE TRIGGER lead_insert_instead
     INSTEAD OF INSERT ON public.lead
     FOR EACH ROW EXECUTE FUNCTION dsr.lead_insert_from_api();
+
+
+-- ---------------------------------------------------------------------
+-- A table the agent cannot miss.
+--
+-- The chat agent has had write access to Supabase all along - it reads and
+-- writes on demand when asked - but of five enquiries submitted through the
+-- website today, it wrote exactly one. It is not failing; it is choosing not
+-- to call the tool, and then telling the customer their enquiry was received.
+--
+-- Part of why is that there was nothing obvious to write to. The only target
+-- was public.lead: a twenty-seven column view over a monthly reporting schema,
+-- with period_id, is_current_period, qualified_stage and load_period_id. An
+-- agent listing the tables sees nothing called "enquiry" anywhere, and a
+-- Perfox "insert a row" action has twenty-seven columns to map.
+--
+-- So this is a five-column table named after the thing it holds, whose columns
+-- are exactly the fields the enquiry form collects. A trigger turns each row
+-- into a proper lead, so the dashboard picks it up with no further work.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.enquiries (
+    enquiry_id        bigserial PRIMARY KEY,
+    full_name         text,
+    email             text,
+    mobile            text,
+    subject           text,
+    message           text,
+    model_of_interest text,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    -- Filled in by the trigger: which lead this enquiry became. Gives the
+    -- agent something to read back, and makes it obvious the row was filed.
+    lead_id           integer
+);
+
+COMMENT ON TABLE public.enquiries IS
+  'Customer enquiries captured by the chat agent. Insert a row here and it
+   becomes a lead on the dashboard automatically - nothing else to set.';
+COMMENT ON COLUMN public.enquiries.lead_id IS
+  'Set by the trigger; the dsr.lead row this enquiry produced.';
+
+-- Reachable with the credentials the agent already uses (which bypass RLS),
+-- but not through the public anon key that is shipped in the website bundle -
+-- this table is writable, and the widget is on a page anyone can open.
+ALTER TABLE public.enquiries ENABLE ROW LEVEL SECURITY;
+
+
+CREATE OR REPLACE FUNCTION public.enquiry_to_lead() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    new_lead integer;
+BEGIN
+    IF NEW.lead_id IS NULL AND coalesce(NEW.full_name, NEW.mobile) IS NOT NULL THEN
+        -- Straight through public.lead, so the reporting month, the visibility
+        -- flag, the DIGITAL channel and MANUAL provenance are all decided in
+        -- one place rather than duplicated here.
+        INSERT INTO public.lead (lead_name, mobile, email, model_of_interest,
+                                 created_at)
+        VALUES (NEW.full_name, NEW.mobile, NEW.email, NEW.model_of_interest,
+                coalesce(NEW.created_at, now()))
+        RETURNING lead_id INTO new_lead;
+
+        -- What the customer actually wrote. public.lead does not expose
+        -- enquiry_note, so it is set on the base table.
+        UPDATE dsr.lead
+           SET enquiry_note = nullif(concat_ws(' | ', NEW.subject, NEW.message), '')
+         WHERE lead_id = new_lead;
+
+        NEW.lead_id := new_lead;
+    END IF;
+    RETURN NEW;
+END $$;
+
+COMMENT ON FUNCTION public.enquiry_to_lead() IS
+  'Turns a row in public.enquiries into a dashboard lead.';
+
+DROP TRIGGER IF EXISTS enquiries_to_lead ON public.enquiries;
+CREATE TRIGGER enquiries_to_lead
+    BEFORE INSERT ON public.enquiries
+    FOR EACH ROW EXECUTE FUNCTION public.enquiry_to_lead();

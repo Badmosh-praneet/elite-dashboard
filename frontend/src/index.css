@@ -954,6 +954,50 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .rail-quiet { color: var(--ink-muted); font-size: 12px; }
 .rail-btn:disabled { opacity: 0.5; }
 
+/* The Record group folds away. Six buttons was the longest thing in the rail
+   and most visits only read the sheet, so the group names itself and opens
+   when there is something to enter. */
+.rail-disclosure {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+.rail-disclosure:hover { color: var(--ink-2); }
+.rail-disclosure:hover .rail-legend { color: var(--ink-2); }
+.rail-disclosure .rail-legend { transition: color 120ms ease; }
+.rail-chevron { flex: none; transition: transform 160ms ease; }
+.rail-chevron.is-open { transform: rotate(180deg); }
+
+/* 0fr to 1fr animates where height:auto cannot. The inner element carries the
+   overflow, so the buttons are clipped as the row closes rather than spilling
+   over the block below. */
+.rail-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 170ms ease, opacity 170ms ease;
+  opacity: 0;
+}
+.rail-drawer.is-open { grid-template-rows: 1fr; opacity: 1; }
+.rail-drawer-inner {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+}
+.rail-drawer.is-open .rail-drawer-inner { padding-top: 5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-drawer, .rail-chevron { transition: none; }
+}
+
 .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 3px; }
 
 @media (max-width: 1000px) {

@@ -125,6 +125,34 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 
+-- The trim a customer names, in the spelling the sheets already use. Only the
+-- named lines are matched; "Sport" is deliberately absent, because "Taigun
+-- Sport" is a model line rather than a trim and would mislabel every one.
+CREATE OR REPLACE FUNCTION dsr.trim_from_text(t text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+        WHEN upper(t) LIKE '%GT PLUS%'     THEN 'GT Plus'
+        WHEN upper(t) LIKE '%GT LINE%'     THEN 'GT Line'
+        WHEN upper(t) LIKE '%COMFORTLINE%' THEN 'Comfortline'
+        WHEN upper(t) LIKE '%HIGHLINE%'    THEN 'Highline'
+        WHEN upper(t) LIKE '%TOPLINE%'     THEN 'Topline'
+        WHEN upper(t) LIKE '%TRENDLINE%'   THEN 'Trendline'
+        ELSE NULL END;
+$$;
+
+-- A colour the dealership actually stocks, if the customer named one. Longest
+-- match wins, so "Wild Cherry Red Metallic" is not truncated to "Wild Cherry
+-- Red". Matched against dim_colour rather than a hand-written list, so it
+-- tracks the catalogue.
+CREATE OR REPLACE FUNCTION dsr.colour_from_text(t text) RETURNS text
+LANGUAGE sql STABLE AS $$
+    SELECT c.name FROM dsr.dim_colour c
+     WHERE t IS NOT NULL AND upper(t) LIKE '%' || upper(c.name) || '%'
+     ORDER BY length(c.name) DESC
+     LIMIT 1;
+$$;
+
+
 CREATE OR REPLACE FUNCTION dsr.lead_insert_from_api() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -262,11 +290,19 @@ CREATE TABLE IF NOT EXISTS public.enquiries (
     subject           text,
     message           text,
     model_of_interest text,
+    variant_of_interest text,
+    colour_of_interest  text,
     created_at        timestamptz NOT NULL DEFAULT now(),
     -- Filled in by the trigger: which lead this enquiry became. Gives the
     -- agent something to read back, and makes it obvious the row was filed.
     lead_id           integer
 );
+
+-- Added after the table first shipped, so CREATE TABLE IF NOT EXISTS above
+-- would skip them on an existing database.
+ALTER TABLE public.enquiries
+    ADD COLUMN IF NOT EXISTS variant_of_interest text,
+    ADD COLUMN IF NOT EXISTS colour_of_interest  text;
 
 COMMENT ON TABLE public.enquiries IS
   'Customer enquiries captured by the chat agent. Insert a row here and it
@@ -290,12 +326,22 @@ BEGIN
         -- flag, the DIGITAL channel and MANUAL provenance are all decided in
         -- one place rather than duplicated here.
         INSERT INTO public.lead (lead_name, mobile, email, model_of_interest,
+                                 variant_of_interest, colour_of_interest,
                                  created_at)
         VALUES (NEW.full_name, NEW.mobile, NEW.email,
                 -- The form has no model field, but the customer names one in
                 -- the subject or the message ("Virtus GT availability").
                 coalesce(NEW.model_of_interest,
                          dsr.model_family_from_text(
+                             concat_ws(' ', NEW.subject, NEW.message))),
+                -- Taken from the form when it asks, and otherwise read out of
+                -- what the customer wrote. Neither is guessed: an enquiry that
+                -- names no trim or colour keeps NULL.
+                coalesce(NEW.variant_of_interest,
+                         dsr.trim_from_text(
+                             concat_ws(' ', NEW.subject, NEW.message))),
+                coalesce(NEW.colour_of_interest,
+                         dsr.colour_from_text(
                              concat_ws(' ', NEW.subject, NEW.message))),
                 coalesce(NEW.created_at, now()))
         RETURNING lead_id INTO new_lead;

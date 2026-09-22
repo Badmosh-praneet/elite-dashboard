@@ -148,6 +148,16 @@ BEGIN
         NEW.is_current_period := coalesce(act, false);
     END IF;
 
+    -- An enquiry with no channel counts in the headline total but drops out of
+    -- the Lead Sources split, so the chart and the KPI disagree by one for
+    -- every lead the agent files. A chat enquiry is a digital lead, so that is
+    -- the channel it gets. Looked up by name rather than by id, because the
+    -- surrogate key is not stable across a rebuild.
+    IF NEW.source_id IS NULL THEN
+        SELECT source_id INTO NEW.source_id
+          FROM dsr.dim_lead_source WHERE name = 'DIGITAL';
+    END IF;
+
     INSERT INTO dsr.lead (
         lead_id, lead_record_id, created_at, lead_name, mobile, email,
         source_id, lead_type, model_of_interest, variant_of_interest,

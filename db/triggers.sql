@@ -109,6 +109,22 @@ END $$;
 -- exist. On the view, only writes arriving from outside are touched.
 -- ---------------------------------------------------------------------
 
+-- The model a customer names in free text, mapped to the dealership's
+-- catalogue. Mirrors etl/normalize._FAMILY_PATTERNS, including its order:
+-- "TIGUAN R-LINE" has to be tested before "TAIGUN" would ever match, and GOLF
+-- resolves to GOLF GTI because that is the only Golf sold here.
+CREATE OR REPLACE FUNCTION dsr.model_family_from_text(t text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+        WHEN upper(t) LIKE '%TIGUAN R-LINE%' THEN 'TIGUAN R-LINE'
+        WHEN upper(t) LIKE '%TAYRON%'        THEN 'TAYRON'
+        WHEN upper(t) LIKE '%GOLF%'          THEN 'GOLF GTI'
+        WHEN upper(t) LIKE '%VIRTUS%'        THEN 'VIRTUS'
+        WHEN upper(t) LIKE '%TAIGUN%'        THEN 'TAIGUN'
+        ELSE NULL END;
+$$;
+
+
 CREATE OR REPLACE FUNCTION dsr.lead_insert_from_api() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -157,6 +173,20 @@ BEGIN
         SELECT source_id INTO NEW.source_id
           FROM dsr.dim_lead_source WHERE name = 'DIGITAL';
     END IF;
+
+    -- Resolve the model the customer named to the catalogue, so the enquiry
+    -- counts in Model Demand and not only in the headline total. 95% of leads
+    -- carry a model_id; one arriving without it is the odd one out.
+    IF NEW.model_id IS NULL AND NEW.model_of_interest IS NOT NULL THEN
+        SELECT m.model_id INTO NEW.model_id
+          FROM dsr.dim_model m
+         WHERE m.name = dsr.model_family_from_text(NEW.model_of_interest);
+    END IF;
+
+    -- Someone enquiring through the website is a retail customer. The two
+    -- corporate types are entered by the fleet desk and never come from here,
+    -- and Retail is 96% of every lead_type on the table.
+    NEW.lead_type := coalesce(NEW.lead_type, 'Retail');
 
     -- Assigned onto NEW rather than inlined, so that an INSERT through this
     -- view can RETURNING lead_id - which is how public.enquiries learns which
@@ -261,7 +291,12 @@ BEGIN
         -- one place rather than duplicated here.
         INSERT INTO public.lead (lead_name, mobile, email, model_of_interest,
                                  created_at)
-        VALUES (NEW.full_name, NEW.mobile, NEW.email, NEW.model_of_interest,
+        VALUES (NEW.full_name, NEW.mobile, NEW.email,
+                -- The form has no model field, but the customer names one in
+                -- the subject or the message ("Virtus GT availability").
+                coalesce(NEW.model_of_interest,
+                         dsr.model_family_from_text(
+                             concat_ws(' ', NEW.subject, NEW.message))),
                 coalesce(NEW.created_at, now()))
         RETURNING lead_id INTO new_lead;
 

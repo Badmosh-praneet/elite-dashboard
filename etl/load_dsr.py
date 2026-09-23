@@ -859,13 +859,32 @@ class Loader:
             pk = self._pk(table)
             match = " AND ".join(
                 f"(new.{c} IS NOT DISTINCT FROM old.{c})" for c in cols)
+
+            # Only rows belonging to the month being loaded count as the "same
+            # row". Compared across the whole table, appending the August
+            # workbook into OCT2026 found all 2,154 of its leads already
+            # present under AUG2026 and deleted every one, leaving the new
+            # month with nothing but its targets. The guard is for the same
+            # slice uploaded twice into the SAME month, not for the same data
+            # legitimately filed under two.
+            params = [mark, mark]
+            if table in ("lead", "booking"):
+                scope = f" AND (old.period_id IS NOT DISTINCT FROM new.period_id)"
+            else:
+                # These three carry no business period. load_period_id records
+                # which load produced a row, and stamp_load() sets it after
+                # this runs - so rows from an earlier load into this same month
+                # already carry it, and the ones just added are still NULL.
+                scope = " AND old.load_period_id IS NOT DISTINCT FROM %s"
+                params.append(self.period_id)
+
             removed = self.cx.execute(f"""
                 DELETE FROM {table} new
                  WHERE new.{pk} > %s
                    AND new.origin = 'WORKBOOK'
                    AND EXISTS (SELECT 1 FROM {table} old
-                                WHERE old.{pk} <= %s AND {match})
-            """, (mark, mark)).rowcount
+                                WHERE old.{pk} <= %s AND {match}{scope})
+            """, tuple(params)).rowcount
             if removed:
                 self.counts[f"{table}_already_present"] = removed
 

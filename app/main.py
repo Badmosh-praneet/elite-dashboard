@@ -275,6 +275,29 @@ def kpi_trends():
         return empty
 
 
+def _trim_trailing_empty(buckets: list[dict], keys: tuple[str, ...]) -> list[dict]:
+    """
+    Drop the buckets after the last one with activity.
+
+    A spine runs the length of the reporting month, so a month reported up to
+    the 21st drew nine more days of zeros - a line that falls to the floor and
+    stays there, which reads as business collapsing rather than as days that
+    have not happened yet.
+
+    Only the tail goes. A quiet Wednesday in the middle of the month is a real
+    day on which nothing sold and the dip belongs on the chart; the days after
+    the last one reported are not days at all yet. If nothing has any activity
+    the first bucket is kept, so the axis still has something to draw.
+    """
+    last = -1
+    for i, b in enumerate(buckets):
+        if any(b.get(k) for k in keys):
+            last = i
+    if last < 0:
+        return buckets[:1]
+    return buckets[:last + 1]
+
+
 @app.get("/api/sales/timeline", tags=["dashboard"])
 def sales_timeline(
     grain: str = Query("day", pattern="^(day|week|month)$"),
@@ -398,6 +421,18 @@ def sales_timeline(
             outside = bool(covered and (covered[0] < p["period_start"]
                                         or covered[1] > p["period_end"]))
 
+            buckets = [{
+                "key": r["bucket"].isoformat(),
+                "label": r["bucket"].isoformat(),
+                "bookings": r["bookings"],
+                "enquiries": r["enquiries"],
+                "revenue": float(r["revenue"] or 0),
+            } for r in rows]
+            # Months are discrete and a month with nothing in it is worth
+            # seeing; a day that has not been reported yet is not.
+            if grain != "month":
+                buckets = _trim_trailing_empty(buckets, ("bookings", "enquiries", "revenue"))
+
             return {
                 "grain": grain,
                 "period": p["label"],
@@ -407,13 +442,7 @@ def sales_timeline(
                 # outside it - the sheet says so rather than showing a chart
                 # whose axis silently disagrees with its title.
                 "dates_outside_period": outside,
-                "buckets": [{
-                    "key": r["bucket"].isoformat(),
-                    "label": r["bucket"].isoformat(),
-                    "bookings": r["bookings"],
-                    "enquiries": r["enquiries"],
-                    "revenue": float(r["revenue"] or 0),
-                } for r in rows],
+                "buckets": buckets,
             }
     except Exception:
         log.exception("sales timeline failed")
@@ -565,6 +594,12 @@ def sales_trends(
             "by_source": series(src_map.get(r["bucket"], {}), src_keep, src_rest),
             "by_model": series(mdl_map.get(r["bucket"], {}), mdl_keep, mdl_rest),
         })
+
+    # Same as the timeline: stop at the last bucket with anything in it.
+    # cumulative_revenue carries forward and is non-zero in every trailing
+    # bucket, so it is deliberately not one of the keys tested - judging on it
+    # would keep the entire empty tail.
+    buckets = _trim_trailing_empty(buckets, ("enquiries", "bookings", "revenue"))
 
     # Reported from the window the data actually occupies, not from the bucket
     # keys. date_trunc(week) pulls the first bucket back to its Monday, so a

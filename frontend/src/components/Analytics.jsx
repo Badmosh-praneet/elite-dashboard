@@ -122,10 +122,17 @@ function BookingPace({ orderbook = [], target = 0 }) {
     dated.forEach(d => {
       if (d.getUTCMonth() === month) perDay[d.getUTCDate()] += 1;
     });
-    // The pace line is the target spread evenly across the month, so the gap
-    // between the two lines reads directly as "ahead" or "behind".
+    // Stop at the last day that has a booking. Running to the end of the month
+    // drew the booked line flat along the floor for every day not yet
+    // reported, which reads as sales having stopped rather than as days that
+    // have not happened. The target pace is still computed against the whole
+    // month, so the gap between the two lines still means "ahead" or "behind"
+    // - it is only drawn as far as there is anything to compare it with.
+    let lastDay = 0;
+    for (let day = 1; day <= days; day++) if (perDay[day]) lastDay = day;
+
     let run = 0;
-    for (let day = 1; day <= days; day++) {
+    for (let day = 1; day <= lastDay; day++) {
       run += perDay[day];
       data.push({
         day,

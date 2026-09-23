@@ -10,6 +10,7 @@ import EntryDrawer from './components/EntryDrawer';
 import ExcelUploadModal from './components/ExcelUploadModal';
 import ExportDataModal from './components/ExportDataModal';
 import ToastContainer from './components/ToastContainer';
+import ChatWidget from './components/ChatWidget';
 import SheetFooter from './components/SheetFooter';
 import Loading from './components/Loading';
 import PeriodManager from './components/PeriodManager';
@@ -365,6 +366,10 @@ export default function App() {
 
       {/* Toasts */}
       <ToastContainer toasts={toasts} />
+
+      {/* Perfox "Dashboard Insights" agent - internal staff copilot over
+          live dashboard data. Renders nothing until VITE_PERFOX_SITE_ID is set. */}
+      <ChatWidget />
     </div>
   );
 }

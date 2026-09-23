@@ -373,3 +373,94 @@ DROP TRIGGER IF EXISTS enquiries_to_lead ON public.enquiries;
 CREATE TRIGGER enquiries_to_lead
     BEFORE INSERT ON public.enquiries
     FOR EACH ROW EXECUTE FUNCTION public.enquiry_to_lead();
+
+
+-- ---------------------------------------------------------------------
+-- Catch a lead written straight into dsr.lead, whichever door it came through.
+--
+-- lead_insert_instead already fixes writes arriving through public.lead, which
+-- is what PostgREST exposes. But the agent has full SQL and found the base
+-- table, so it writes there instead - and the view trigger never fires. On
+-- 2026-09-23 that produced a lead with period_id NULL, source_id NULL and
+-- origin WORKBOOK: stored, invisible on every chart, and due to be deleted by
+-- the next monthly upload.
+--
+-- The discriminator is entered_by. The ETL loader never sets it - all 4,202
+-- workbook rows have it NULL - so a row that names who entered it did not come
+-- from a workbook. That matters, because load_leads() files the 2024 TD Leads
+-- archive with period_id NULL on purpose, and a trigger that filled those in
+-- would invent 1,787 rows of 2024 reporting months.
+--
+-- Everything here fills a gap. A value supplied explicitly is kept, so the
+-- dashboard's own entry form - which already sets all of this - passes through
+-- untouched.
+-- ---------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION dsr.lead_fill_direct() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    d    date;
+    pid  smallint;
+    act  boolean;
+BEGIN
+    IF NEW.entered_by IS NULL THEN
+        RETURN NEW;                      -- a bulk load; leave it entirely alone
+    END IF;
+
+    NEW.created_at := coalesce(NEW.created_at, now());
+    d := NEW.created_at::date;
+
+    IF NEW.period_id IS NULL THEN
+        SELECT period_id, is_active INTO pid, act
+          FROM dsr.dim_period
+         WHERE d BETWEEN period_start AND period_end
+         LIMIT 1;
+
+        IF pid IS NULL THEN
+            INSERT INTO dsr.dim_period (label, period_start, period_end)
+            VALUES (upper(to_char(d, 'MON')) || to_char(d, 'YYYY'),
+                    date_trunc('month', d)::date,
+                    (date_trunc('month', d) + interval '1 month'
+                                            - interval '1 day')::date)
+            ON CONFLICT (label) DO UPDATE SET label = EXCLUDED.label
+            RETURNING period_id, is_active INTO pid, act;
+        END IF;
+
+        NEW.period_id := pid;
+        NEW.is_current_period := coalesce(act, false);
+    END IF;
+
+    -- Without a channel the lead counts in the headline total but drops out of
+    -- the Lead Sources split, so the chart and the tile above it disagree.
+    IF NEW.source_id IS NULL THEN
+        SELECT source_id INTO NEW.source_id
+          FROM dsr.dim_lead_source WHERE name = 'DIGITAL';
+    END IF;
+
+    IF NEW.model_id IS NULL AND NEW.model_of_interest IS NOT NULL THEN
+        SELECT m.model_id INTO NEW.model_id
+          FROM dsr.dim_model m
+         WHERE m.name = dsr.model_family_from_text(NEW.model_of_interest);
+    END IF;
+
+    NEW.lead_type := coalesce(NEW.lead_type, 'Retail');
+
+    -- Not coalesced: origin defaults to WORKBOOK at the column, so a row that
+    -- did not set it is indistinguishable from one that did. Since the loader
+    -- never sets entered_by, anything reaching here is by definition not
+    -- workbook output - and reset() deletes only WORKBOOK rows, so leaving it
+    -- would have this lead swept away by the next monthly import.
+    NEW.origin := 'MANUAL';
+
+    RETURN NEW;
+END $$;
+
+COMMENT ON FUNCTION dsr.lead_fill_direct() IS
+  'Fills the reporting month, channel, model and provenance for leads written
+   directly into dsr.lead - the path the chat agent uses. Keyed on entered_by,
+   which the ETL loader never sets, so a bulk load is never touched.';
+
+DROP TRIGGER IF EXISTS lead_fill_direct ON dsr.lead;
+CREATE TRIGGER lead_fill_direct
+    BEFORE INSERT ON dsr.lead
+    FOR EACH ROW EXECUTE FUNCTION dsr.lead_fill_direct();

@@ -902,6 +902,9 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   letter-spacing: 0.04em;
   border-radius: 0;
 }
+/* The roundel is already a self-contained mark - the square frame around
+   the old "VW" initials would just clash with it. */
+.rail-seal-logo { border: none; }
 .rail-name {
   font-family: var(--font-display);
   font-size: 19px;

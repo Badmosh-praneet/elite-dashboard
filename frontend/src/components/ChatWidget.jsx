@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 
 const SITE_ID = import.meta.env.VITE_PERFOX_SITE_ID;
 // Fixed per the elite-motors Perfox workspace; only the per-agent Site ID varies.
-const WIDGET_SRC = 'https://elite-motors-api.perfox.ai/widget.js';
+const WIDGET_SRC = 'https://elite-motors-api.perfox.ai/widget/v1/widget.js';
 
 /**
  * Boots the Perfox "Dashboard Insights" agent's web-chat widget. Mounted once

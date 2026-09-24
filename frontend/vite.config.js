@@ -13,7 +13,10 @@ export default defineConfig(({ mode }) => {
   base: '/static/',
   plugins: [react()],
   build: {
-    outDir: path.resolve(__dirname, '../public'),
+    // app/static is what main.py actually serves (see tools/sync_public.py);
+    // public/ is a generated deploy-copy for Vercel, regenerated from here via
+    // `python tools/sync_public.py`, not written to directly by this build.
+    outDir: path.resolve(__dirname, '../app/static'),
     emptyOutDir: false,
     rollupOptions: {
       output: {

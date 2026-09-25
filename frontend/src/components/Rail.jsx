@@ -8,6 +8,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import {
   PlusCircle, UserPlus, Compass, KeyRound, UploadCloud, Download,
   RefreshCw, Table, Sun, Moon, Headset, CalendarCog, ChevronDown
@@ -119,17 +120,20 @@ export default function Rail({
         </span>
       </div>
 
-      {/* The map. Anchors rather than scroll hijacking, so the browser's own
-          back button still does what it should. */}
+      {/* The site's navigation. NavLink renders a real anchor with a real
+          href, so the status bar shows where a link goes, middle-click and
+          cmd-click still open a new tab, and the router only intercepts the
+          plain left-click it can handle without breaking any of that. */}
       <nav className="rail-nav">
         {sections.map(s => (
-          <a
+          <NavLink
             key={s.id}
-            href={`#${s.id}`}
-            className={activeSection === s.id ? 'is-here' : ''}
+            to={s.path || `/${s.id}`}
+            end={s.path === '/'}
+            className={({ isActive }) => (isActive ? 'is-here' : '')}
           >
             {s.label}
-          </a>
+          </NavLink>
         ))}
       </nav>
 

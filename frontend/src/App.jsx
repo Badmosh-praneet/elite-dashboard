@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { BrowserRouter, useLocation } from 'react-router-dom';
 import Rail from './components/Rail';
 import HeroMetric from './components/HeroMetric';
 import KpiTiles from './components/KpiTiles';
@@ -34,31 +35,31 @@ import { setupLiveEvents } from './api/liveEvents';
  * panel titles beneath it.
  */
 /**
- * The sheet is divided by department rather than by act.
+ * The dashboard is a set of pages, one per department.
  *
- * It used to be one scroll of fourteen panels with seams between them, which
- * reads as a single report and means anyone answering a question about stock
- * scrolls past the whole sales story to reach it. Split by who is asking:
- * sales, accounts, the people on the floor, the cars on it.
+ * It used to be one scroll of fourteen panels, then one page of hash tabs.
+ * Both were a single document pretending to be several. These are real routes:
+ * /sales and /accounts are addresses you can type, bookmark, send to someone,
+ * and land on directly - which is what anybody means by a website.
  *
- * Only the open tab renders. That is what makes this worth doing at all - the
- * page was mounting every chart on load, and Recharts is not cheap.
+ * Only the page you are on renders, which is also what makes it quick: the old
+ * sheet mounted every chart on load and Recharts is not cheap.
  *
- * Each tab is a hash, so the browser's back button works, a tab can be linked
- * to, and a reload stays where it was. The rail is the tab bar; it was already
- * a list of anchors pointing at seams, so it needed no new markup.
+ * The server serves index.html for any path it does not recognise, so a refresh
+ * on /people is a page rather than a 404 - see spa_fallback in app/main.py.
+ * Without that half of this would only work for someone who clicked their way
+ * here.
  */
-const TABS = [
-  { id: 'overview',  label: 'Overview',  note: 'Where the month stands' },
-  { id: 'sales',     label: 'Sales',     note: 'Enquiries, demand and how the month is running' },
-  { id: 'accounts',  label: 'Accounts',  note: 'Attachments and how fast paperwork clears' },
-  { id: 'people',    label: 'People',    note: 'Consultants against their targets' },
-  { id: 'inventory', label: 'Inventory', note: 'Stock by model, ageing, and orders awaiting a car' },
-  { id: 'calls',     label: 'Calls',     note: 'What the agent handled on the phone' },
+const PAGES = [
+  { id: 'overview',  path: '/',          label: 'Overview',  note: 'Where the month stands' },
+  { id: 'sales',     path: '/sales',     label: 'Sales',     note: 'Enquiries, demand and how the month is running' },
+  { id: 'accounts',  path: '/accounts',  label: 'Accounts',  note: 'Attachments and how fast paperwork clears' },
+  { id: 'people',    path: '/people',    label: 'People',    note: 'Consultants against their targets' },
+  { id: 'inventory', path: '/inventory', label: 'Inventory', note: 'Stock by model, ageing, and orders awaiting a car' },
+  { id: 'calls',     path: '/calls',     label: 'Calls',     note: 'What the agent handled on the phone' },
 ];
-const TAB_IDS = TABS.map(t => t.id);
 
-export default function App() {
+function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -161,24 +162,12 @@ export default function App() {
     return cleanup;
   }, [loadData]);
 
-  // Which tab is open, read from the hash so back/forward and a pasted link
-  // all work. The scroll spy this replaces measured seam positions on every
-  // frame; with one tab on screen at a time there is nothing to spy on.
-  const readHash = () => {
-    const h = (window.location.hash || '').replace('#', '');
-    return TAB_IDS.includes(h) ? h : TABS[0].id;
-  };
-  const [activeTab, setActiveTab] = useState(readHash);
-  useEffect(() => {
-    const onHash = () => {
-      setActiveTab(readHash());
-      // A tab is a new page as far as the reader is concerned, so it starts at
-      // the top rather than halfway down wherever the last one was scrolled to.
-      window.scrollTo({ top: 0 });
-    };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  // Which page is open. Taken from the router rather than tracked here, so
+  // the address bar is the single source of truth and back/forward need no
+  // help from us.
+  const location = useLocation();
+  const page = PAGES.find(p => p.path === location.pathname) || PAGES[0];
+  const activeTab = page.id;
 
   // Handle active period change
   const handlePeriodChange = async (newPeriod) => {
@@ -214,7 +203,6 @@ export default function App() {
 
   const activePeriodObj = data?.periods?.find(p => p.is_active) || data?.periods?.[0] || {};
 
-  const tab = TABS.find(t => t.id === activeTab) || TABS[0];
 
   return (
     <div className="shell">
@@ -223,7 +211,7 @@ export default function App() {
         activePeriod={activePeriodObj.label || ''}
         onPeriodChange={handlePeriodChange}
         liveStatus={liveStatus}
-        sections={TABS}
+        sections={PAGES}
         activeSection={activeTab}
         onOpenDrawer={handleOpenDrawer}
         onOpenUpload={() => setUploadModalOpen(true)}
@@ -245,10 +233,10 @@ export default function App() {
             showing. The rail marks it too, but the rail is 232px away and the
             eye is here. */}
         <div style={{ marginBottom: 22 }}>
-          <h1 style={{ fontSize: 22, letterSpacing: '-0.02em' }}>{tab.label}</h1>
-          {tab.note && (
+          <h1 style={{ fontSize: 22, letterSpacing: '-0.02em' }}>{page.label}</h1>
+          {page.note && (
             <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 5 }}>
-              {tab.note}
+              {page.note}
             </div>
           )}
         </div>
@@ -386,5 +374,19 @@ export default function App() {
           live dashboard data. Renders nothing until VITE_PERFOX_SITE_ID is set. */}
       <ChatWidget />
     </div>
+  );
+}
+
+
+/**
+ * useLocation only works inside a Router, and the dashboard is the thing that
+ * needs it - so the router wraps it here rather than in main.jsx, which keeps
+ * everything about routing in one file.
+ */
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Dashboard />
+    </BrowserRouter>
   );
 }

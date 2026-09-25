@@ -1260,3 +1260,33 @@ def health():
         "database": db_status,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
     }
+
+
+# ---------------------------------------------------------------------
+# Every other path belongs to the front end.
+#
+# The dashboard has real routes now - /sales, /accounts, /people - rather than
+# hashes, which means the browser asks this server for them: on a direct visit,
+# on a refresh, and on every link somebody pastes to a colleague. Without this
+# they answered 404 and only the bare "/" worked, which is the classic way a
+# single-page app looks broken to everyone except the person who clicked their
+# way there.
+#
+# Registered last, so it catches only what nothing else claimed. The API is
+# excluded explicitly: a typo under /api should come back as a JSON 404, not as
+# a page of HTML that a fetch will fail to parse and report as something else
+# entirely.
+# ---------------------------------------------------------------------
+_NOT_THE_APP = ("api/", "mcp", "static/", "docs", "redoc", "openapi.json", "health")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str):
+    if full_path.startswith(_NOT_THE_APP):
+        raise HTTPException(status_code=404, detail="Not found")
+    index_file = STATIC / "index.html"
+    if index_file.exists():
+        # no-cache for the same reason "/" uses it: the HTML names a hashed
+        # bundle, and a stale copy points at a file that no longer exists.
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
+    return {"message": "Volkswagen Elite Motors CRM API is running."}

@@ -30,6 +30,7 @@ from .entry import router as entry_router
 from .crm_api import router as crm_router
 from .export import router as export_router
 from .webhooks import router as webhooks_router
+from .calls import router as calls_router
 from .events import broker
 
 log = logging.getLogger("dsr.main")
@@ -95,6 +96,7 @@ app.include_router(crm_router)
 # And the way back out: the live tables as an Excel workbook or a CSV set.
 app.include_router(export_router)
 app.include_router(webhooks_router)
+app.include_router(calls_router)
 
 
 # =====================================================================

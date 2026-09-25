@@ -54,6 +54,98 @@ function ChannelMark({ channel }) {
   );
 }
 
+/**
+ * The conversation, turn by turn.
+ *
+ * The part most people will actually use. A recording needs someone to sit and
+ * listen; this can be read in ten seconds and pasted into a follow-up - and
+ * these calls switch between English, Hindi and Punjabi mid-sentence, which the
+ * one-line summary never captures.
+ */
+function Transcript({ callId }) {
+  const [state, setState] = useState({ loading: true });
+
+  useEffect(() => {
+    let dead = false;
+    setState({ loading: true });
+    api(`/api/calls/${callId}/transcript`)
+      .then(r => { if (!dead) setState({ loading: false, data: r }); })
+      .catch(e => { if (!dead) setState({ loading: false, error: e.message }); });
+    return () => { dead = true; };
+  }, [callId]);
+
+  if (state.loading) {
+    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Reading the transcript…</div>;
+  }
+  if (state.error) {
+    return (
+      <div style={{ display: 'flex', gap: 7, alignItems: 'flex-start',
+                    fontSize: 12, color: 'var(--critical)' }}>
+        <AlertTriangle size={13} style={{ flex: 'none', marginTop: 1 }} />
+        <span>{state.error}</span>
+      </div>
+    );
+  }
+
+  const { turns = [], tools = [], truncated } = state.data || {};
+  if (!turns.length) {
+    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Nothing was said on this call.</div>;
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10,
+                    marginBottom: 9, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, textTransform: 'uppercase',
+                       letterSpacing: '0.07em', color: 'var(--ink-muted)' }}>
+          Transcript
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+          {n0(turns.length)} turns
+          {tools.length > 0 && <> · agent looked something up {n0(tools.length)}×</>}
+        </span>
+      </div>
+
+      {/* Capped and scrollable: a four-minute call is forty-odd turns, and
+          letting that push the rest of the sheet down means scrolling past a
+          conversation to reach the next panel. */}
+      <div style={{
+        maxHeight: 280, overflowY: 'auto', paddingRight: 8,
+        display: 'flex', flexDirection: 'column', gap: 9,
+      }}>
+        {turns.map((t, i) => {
+          const mine = t.who === 'agent';
+          return (
+            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <span style={{
+                flex: 'none', width: 62, fontSize: 10.5, lineHeight: 1.6,
+                textTransform: 'uppercase', letterSpacing: '0.06em',
+                color: mine ? 'var(--viz-1)' : 'var(--ink-muted)',
+                fontWeight: mine ? 600 : 400,
+              }}>
+                {mine ? 'Agent' : 'Customer'}
+              </span>
+              {/* No white-space:pre - the text arrives as prose, and these are
+                  Devanagari and Gurmukhi as often as Latin, so it has to wrap
+                  normally rather than be held to a monospace column. */}
+              <span style={{ fontSize: 12.5, lineHeight: 1.65,
+                             color: mine ? 'var(--ink-2)' : 'var(--ink)' }}>
+                {t.text}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {truncated && (
+        <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>
+          This transcript was longer than we fetched, so the end is missing.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Recordings({ callId }) {
   const [state, setState] = useState({ loading: true });
 
@@ -217,12 +309,19 @@ export default function AgentCalls() {
                           <tr>
                             <td />
                             <td colSpan={5} style={{ whiteSpace: 'normal',
-                                                     padding: '4px 0 16px' }}>
-                              {c.has_recording
-                                ? <Recordings callId={c.id} />
-                                : <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
-                                    This call was not recorded.
-                                  </span>}
+                                                     padding: '4px 0 18px' }}>
+                              {/* Transcript first. It is the thing that gets
+                                  read; the audio is for when the wording
+                                  matters or the transcript looks wrong. */}
+                              <Transcript callId={c.id} />
+                              <div style={{ marginTop: 14, paddingTop: 12,
+                                            borderTop: '1px solid var(--grid)' }}>
+                                {c.has_recording
+                                  ? <Recordings callId={c.id} />
+                                  : <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                                      This call was not recorded.
+                                    </span>}
+                              </div>
                             </td>
                           </tr>
                         )}

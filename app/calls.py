@@ -5,10 +5,16 @@ Perfox answers the phone; the dashboard reports on the dealership. Until now
 those were separate places to look, and nobody on the floor was going to open
 two systems to find out what the agent had been telling customers all morning.
 
-Two routes, both thin wrappers over the Perfox API:
+Three routes, all thin wrappers over the Perfox API:
 
     GET /api/calls                     what was taken, when, by whom, and why
+    GET /api/calls/{id}/transcript     what was said, turn by turn
     GET /api/calls/{id}/recordings     playback URLs for one call
+
+The transcript is the one worth having. A recording needs someone to sit and
+listen to it; the transcript can be read in ten seconds, searched, and pasted
+into a follow-up - and these calls switch between English, Hindi and Punjabi
+mid-sentence, which no summary line captures.
 
 They are proxies rather than a fetch from the browser for one reason: the
 Perfox key. A call made from the page would ship that key inside the bundle,
@@ -25,6 +31,7 @@ are fetched when a call is actually opened.
 import logging
 import os
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, HTTPException, Path
@@ -132,6 +139,78 @@ def list_calls():
         "recorded": sum(1 for c in calls if c["has_recording"]),
         "talk_seconds": sum(c["duration_seconds"] for c in calls),
         "channels": sorted({c["channel"] for c in calls if c["channel"]}),
+    }
+
+
+@router.get("/{conversation_id}/transcript")
+def call_transcript(conversation_id: str = Path(..., min_length=8, max_length=64)):
+    """
+    What was actually said on one call.
+
+    Perfox keeps a transcript as an event stream rather than a list of turns:
+    call_started, user_message, tool_call, tool_result, ai_response, call_ended.
+    The turns are what a sales manager reads, so those are lifted out; the tool
+    calls are returned separately and counted, because "the agent looked it up"
+    is worth knowing without nine rows of plumbing in the middle of the
+    conversation.
+
+    Paged defensively. One request with a high limit covers every call on
+    record - the longest is 64 events - but `after` is a timestamp rather than
+    a cursor, and a tool_call and its tool_result routinely share one to the
+    millisecond. Paging on that alone would silently drop whichever fell on the
+    boundary, so pages are de-duplicated by event id and the loop is capped.
+    """
+    seen: set[str] = set()
+    events: list[dict] = []
+    after: str | None = None
+    truncated = False
+
+    for _ in range(10):
+        q = "?limit=500" + (f"&after={quote(after)}" if after else "")
+        payload = _get(f"/api/v1/conversations/{conversation_id}/events{q}")
+        page = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(page, list) or not page:
+            break
+
+        fresh = [e for e in page if e.get("id") and e["id"] not in seen]
+        for e in fresh:
+            seen.add(e["id"])
+        events.extend(fresh)
+
+        if not (isinstance(payload, dict) and payload.get("has_more")):
+            break
+        nxt = page[-1].get("created_at")
+        # No timestamp to page on, or it has not moved: stop rather than ask
+        # for the same window forever.
+        if not nxt or nxt == after:
+            truncated = True
+            break
+        after = nxt
+    else:
+        truncated = True
+
+    events.sort(key=lambda e: e.get("created_at") or "")
+
+    turns, tools = [], []
+    for e in events:
+        kind = e.get("event_type")
+        if kind in ("user_message", "ai_response"):
+            text = (e.get("text") or "").strip()
+            if text:
+                turns.append({
+                    "who": "customer" if kind == "user_message" else "agent",
+                    "text": text,
+                    "at": e.get("created_at"),
+                })
+        elif kind == "tool_call":
+            tools.append({"name": e.get("tool_name"), "at": e.get("created_at")})
+
+    return {
+        "id": conversation_id,
+        "turns": turns,
+        "tools": tools,
+        "events": len(events),
+        "truncated": truncated,
     }
 
 

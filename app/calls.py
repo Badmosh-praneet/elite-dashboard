@@ -94,6 +94,70 @@ def _seconds(v: Any) -> int:
         return 0
 
 
+# Perfox scores a handful of things out of ten. Only two are worth a column:
+# whether the customer got what they came for, and how they sounded doing it.
+# The direction was checked against the summaries rather than assumed - a 0
+# reads "the customer requested a manager after the agent failed to address
+# it", a 10 reads "successfully scheduled a test drive".
+def _sentiment(score: Any) -> str | None:
+    if score is None:
+        return None
+    try:
+        n = int(score)
+    except (TypeError, ValueError):
+        return None
+    # Banded rather than matched exactly, so a 3 or a 7 still lands somewhere
+    # if Perfox ever scores off the current 0/5/10 steps.
+    if n <= 2:
+        return "negative"
+    if n >= 8:
+        return "positive"
+    return "neutral"
+
+
+def _verdict(resolution: Any, status: str | None) -> str:
+    """
+    What the call needs next, rather than what it was.
+
+    `resolution` is the QA judgement that the customer's need was met, and it is
+    the only field that speaks to an outcome. `status` is a lifecycle state and
+    disagrees with it on three calls - two say resolved while scoring zero - so
+    resolution wins and status only distinguishes a call that was abandoned
+    from one that simply ended without getting anywhere.
+    """
+    try:
+        res = int(resolution) if resolution is not None else None
+    except (TypeError, ValueError):
+        res = None
+    if res is not None and res >= 8:
+        return "Resolved"
+    if (status or "").lower() == "abandoned":
+        return "Abandoned"
+    if res is None:
+        return "Unscored"
+    return "Needs follow-up"
+
+
+def _cases_by_id() -> dict:
+    """
+    Every case, keyed by conversation id.
+
+    /cases is the only endpoint carrying qa_scores, and it paginates - the
+    default page of 20 covered 15 of 32 calls, so asking for 100 brings all 52
+    in one request and every call finds its case. A failure here is not fatal:
+    the call log is still worth showing without the two scored columns.
+    """
+    try:
+        payload = _get("/api/v1/cases?page=1&page_size=100")
+    except HTTPException:
+        log.warning("cases unavailable; calls will render without QA columns")
+        return {}
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return {}
+    return {r["id"]: r for r in rows if r.get("id")}
+
+
 @router.get("")
 def list_calls():
     """
@@ -114,9 +178,13 @@ def list_calls():
     if not isinstance(rows, list):
         rows = []
 
+    cases = _cases_by_id()
+
     calls = []
     for c in rows:
         user = c.get("end_user") or {}
+        case = cases.get(c.get("conversation_id")) or {}
+        qa = case.get("qa_scores") or {}
         calls.append({
             "id": c.get("conversation_id"),
             "customer_id": c.get("customer_id"),
@@ -129,6 +197,12 @@ def list_calls():
             "duration_seconds": _seconds(c.get("duration_seconds")),
             "has_recording": bool(c.get("has_recording")),
             "summary": (c.get("summary") or "").strip() or None,
+            # From the case, which is where Perfox keeps its QA scoring. Null
+            # when a call has no case rather than guessed at.
+            "sentiment": _sentiment(qa.get("sentiment")) if qa else None,
+            "sentiment_score": qa.get("sentiment") if qa else None,
+            "verdict": _verdict(qa.get("resolution"), case.get("status")) if qa else None,
+            "qa_overall": qa.get("overall") if qa else None,
         })
 
     calls.sort(key=lambda c: c.get("started_at") or "", reverse=True)
@@ -139,6 +213,9 @@ def list_calls():
         "recorded": sum(1 for c in calls if c["has_recording"]),
         "talk_seconds": sum(c["duration_seconds"] for c in calls),
         "channels": sorted({c["channel"] for c in calls if c["channel"]}),
+        "scored": sum(1 for c in calls if c["verdict"]),
+        "resolved": sum(1 for c in calls if c["verdict"] == "Resolved"),
+        "negative": sum(1 for c in calls if c["sentiment"] == "negative"),
     }
 
 

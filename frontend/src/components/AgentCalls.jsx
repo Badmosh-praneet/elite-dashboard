@@ -146,6 +146,48 @@ function Transcript({ callId }) {
   );
 }
 
+/* Perfox scores each call out of ten for whether the customer's need was met
+   and how they sounded. Both are shown as a word with a colour behind it, not
+   as a number: "6/10" invites arithmetic across a column that should be read a
+   row at a time. */
+const SENTIMENT_STYLE = {
+  positive: { label: 'Positive', fg: 'var(--good-text)', bg: 'var(--s3-light)' },
+  neutral:  { label: 'Neutral',  fg: 'var(--ink-2)',     bg: 'var(--sunken)' },
+  negative: { label: 'Negative', fg: 'var(--critical)',  bg: 'var(--critical-light)' },
+};
+
+const VERDICT_STYLE = {
+  'Resolved':        { fg: 'var(--good-text)', bg: 'var(--s3-light)' },
+  'Needs follow-up': { fg: 'var(--warning)',   bg: 'var(--critical-light)' },
+  'Abandoned':       { fg: 'var(--critical)',  bg: 'var(--critical-light)' },
+  'Unscored':        { fg: 'var(--ink-muted)', bg: 'var(--sunken)' },
+};
+
+function Pill({ text, fg, bg, title }) {
+  return (
+    <span title={title} style={{
+      display: 'inline-block', padding: '2px 9px', borderRadius: 2,
+      fontSize: 11, lineHeight: 1.6, whiteSpace: 'nowrap',
+      color: fg, background: bg, border: `1px solid ${fg}`,
+    }}>
+      {text}
+    </span>
+  );
+}
+
+function Sentiment({ value, score }) {
+  const s = SENTIMENT_STYLE[value];
+  if (!s) return <span style={{ color: 'var(--ink-muted)' }}>—</span>;
+  return <Pill text={s.label} fg={s.fg} bg={s.bg}
+               title={score != null ? `Scored ${score} out of 10` : undefined} />;
+}
+
+function Verdict({ value }) {
+  const v = VERDICT_STYLE[value];
+  if (!v) return <span style={{ color: 'var(--ink-muted)' }}>—</span>;
+  return <Pill text={value} fg={v.fg} bg={v.bg} />;
+}
+
 function Recordings({ callId }) {
   const [state, setState] = useState({ loading: true });
 
@@ -225,7 +267,8 @@ export default function AgentCalls() {
   const note = !data && !error ? 'Reading the call log…'
     : error ? null
     : `${n0(data.total)} calls · ${mmss(data.talk_seconds)} on the phone`
-      + ` · ${n0(data.recorded)} recorded`;
+      + ` · ${n0(data.resolved)} resolved`
+      + (data.negative ? ` · ${n0(data.negative)} left unhappy` : '');
 
   return (
     <section style={{ marginBottom: 26 }}>
@@ -260,6 +303,8 @@ export default function AgentCalls() {
                     <th>Caller</th>
                     <th>Channel</th>
                     <th className="num">Length</th>
+                    <th>Action verdict</th>
+                    <th>Sentiment</th>
                     <th>What was said</th>
                   </tr>
                 </thead>
@@ -293,6 +338,8 @@ export default function AgentCalls() {
                           </td>
                           <td><ChannelMark channel={c.channel} /></td>
                           <td className="num">{mmss(c.duration_seconds)}</td>
+                          <td><Verdict value={c.verdict} /></td>
+                          <td><Sentiment value={c.sentiment} score={c.sentiment_score} /></td>
                           {/* The summary is the column people read, so it gets
                               the room the fixed columns do not need. */}
                           <td style={{ whiteSpace: 'normal', maxWidth: 460,
@@ -308,7 +355,7 @@ export default function AgentCalls() {
                         {isOpen && (
                           <tr>
                             <td />
-                            <td colSpan={5} style={{ whiteSpace: 'normal',
+                            <td colSpan={7} style={{ whiteSpace: 'normal',
                                                      padding: '4px 0 18px' }}>
                               {/* Transcript first. It is the thing that gets
                                   read; the audio is for when the wording

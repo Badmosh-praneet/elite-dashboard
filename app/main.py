@@ -31,6 +31,7 @@ from .crm_api import router as crm_router
 from .export import router as export_router
 from .webhooks import router as webhooks_router
 from .calls import router as calls_router
+from .mcp_server import router as mcp_router
 from .events import broker
 
 log = logging.getLogger("dsr.main")
@@ -97,6 +98,8 @@ app.include_router(crm_router)
 app.include_router(export_router)
 app.include_router(webhooks_router)
 app.include_router(calls_router)
+# The Perfox "Dashboard Insights" agent's tool surface.
+app.include_router(mcp_router)
 
 
 # =====================================================================

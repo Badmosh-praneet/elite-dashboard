@@ -10,6 +10,10 @@
       "destination": "/api/index.py"
     },
     {
+      "source": "/mcp",
+      "destination": "/api/index.py"
+    },
+    {
       "source": "/docs",
       "destination": "/api/index.py"
     },

@@ -534,9 +534,14 @@ def sales_trends(
                 FROM spine s ORDER BY s.bucket
             """, (lo, hi)).fetchall()
 
+            # Channel, not the individual source row. The CRM export puts a
+            # salesperson's name in the source column on some leads, so
+            # grouping by name stacked ADITYA KUMAR beside CRM and WALKIN -
+            # people and categories in one stack. Same grouping as
+            # v_leads_sourcewise, so this chart and Lead Sources agree.
             by_source = cx.execute(f"""
                 SELECT date_trunc('{grain}', l.created_at)::date AS bucket,
-                       COALESCE(src.name, 'Unattributed') AS name,
+                       COALESCE(src.channel::text, 'Unattributed') AS name,
                        count(*) AS n
                   FROM lead l LEFT JOIN dim_lead_source src USING (source_id)
                  WHERE l.is_current_period AND l.created_at IS NOT NULL

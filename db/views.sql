@@ -233,10 +233,26 @@ FROM v_order_book b
 WHERE b.fulfilment_status = 'NO_STOCK';
 
 -- Enquiry volume by channel for the current period.
+-- Grouped by channel, not by the individual source row.
+--
+-- The source column in the CRM export sometimes holds a salesperson's name
+-- instead of a channel, so the chart listed CRM, WALKIN, TELE and DIGITAL
+-- beside ADITYA KUMAR and DIVYA SHREE - categories and people in one ranking,
+-- which is not a thing you can read. Those rows are classified REFERRAL now
+-- (a lead credited to a named individual is a referral from them) and this
+-- groups on the channel, so the chart is six categories rather than twelve
+-- entries of two different kinds.
+--
+-- The individual names are not lost - they are still in dim_lead_source.name
+-- against every lead, for anyone who needs to know which consultant brought
+-- what. They are simply not a category.
+--
+-- is_paid_media is aggregated with bool_or: a channel counts as paid if any
+-- source within it is, which today is only DIGITAL.
 CREATE OR REPLACE VIEW v_leads_sourcewise AS
-SELECT s.name                                                        AS source,
+SELECT s.channel::text                                               AS source,
        s.channel,
-       s.is_paid_media,
+       bool_or(s.is_paid_media)                                      AS is_paid_media,
        count(*)                                                      AS leads,
        count(*) FILTER (WHERE l.qualified_stage = 'Qualified')        AS qualified,
        round(100.0 * count(*) FILTER (WHERE l.qualified_stage = 'Qualified')
@@ -244,7 +260,7 @@ SELECT s.name                                                        AS source,
 FROM lead l
 JOIN dim_lead_source s USING (source_id)
 WHERE l.is_current_period
-GROUP BY s.source_id, s.name, s.channel, s.is_paid_media;
+GROUP BY s.channel;
 
 -- Model demand vs supply: what people ask for against what is in stock.
 -- Family level, for the same reason as v_model_position.

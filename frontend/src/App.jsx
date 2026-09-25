@@ -19,7 +19,11 @@ import Trends from './components/Trends';
 import Composition from './components/Composition';
 import AgentCalls from './components/AgentCalls';
 import Visualizations from './components/Visualizations';
-import Analytics from './components/Analytics';
+import {
+  BookingPace, Commitments, StockAgeing, Backorders,
+  ConsultantConversion, Attachments, DataQuality,
+} from './components/Analytics';
+import FolderTat from './components/FolderTat';
 import { fetchDashboardData, activatePeriod, DASHBOARD_CALLS } from './api/client';
 import { setupLiveEvents } from './api/liveEvents';
 
@@ -29,45 +33,30 @@ import { setupLiveEvents } from './api/liveEvents';
  * across cloth, rather than being another heavy heading competing with the
  * panel titles beneath it.
  */
-const SECTIONS = [
-  { id: 'month', label: 'This month', note: null },
-  { id: 'sources', label: 'Where it comes from', note: 'Enquiries, demand and who is converting' },
-  { id: 'running', label: 'How the month is running', note: 'Pace against target, and what is holding orders up' },
-  { id: 'floor', label: 'What is on the floor', note: 'Stock by model and how long it has been standing' },
-];
-
 /**
- * A seam, and the anchor the rail points at. Fourteen panels in one column read
- * as an undifferentiated scroll, so the page is divided into acts - the label
- * sits on a rule the way a seam runs across cloth, rather than being another
- * heavy heading competing with the panel titles beneath it.
+ * The sheet is divided by department rather than by act.
+ *
+ * It used to be one scroll of fourteen panels with seams between them, which
+ * reads as a single report and means anyone answering a question about stock
+ * scrolls past the whole sales story to reach it. Split by who is asking:
+ * sales, accounts, the people on the floor, the cars on it.
+ *
+ * Only the open tab renders. That is what makes this worth doing at all - the
+ * page was mounting every chart on load, and Recharts is not cheap.
+ *
+ * Each tab is a hash, so the browser's back button works, a tab can be linked
+ * to, and a reload stays where it was. The rail is the tab bar; it was already
+ * a list of anchors pointing at seams, so it needed no new markup.
  */
-function Seam({ id, label, note }) {
-  return (
-    <div id={id} style={{
-      margin: '52px 0 22px', display: 'flex', alignItems: 'baseline', gap: '16px',
-      scrollMarginTop: '24px',
-    }}>
-      <div style={{ flex: 'none' }}>
-        <div style={{
-          fontSize: '11px', letterSpacing: '0.2em', textTransform: 'uppercase',
-          color: 'var(--ink-2)',
-        }}>
-          {label}
-        </div>
-        {note && (
-          <div style={{ fontSize: '11.5px', color: 'var(--ink-muted)', marginTop: '3px' }}>
-            {note}
-          </div>
-        )}
-      </div>
-      <div style={{
-        flex: 1, height: '1px', transform: 'translateY(-4px)',
-        background: 'linear-gradient(to right, var(--axis), transparent)',
-      }} />
-    </div>
-  );
-}
+const TABS = [
+  { id: 'overview',  label: 'Overview',  note: 'Where the month stands' },
+  { id: 'sales',     label: 'Sales',     note: 'Enquiries, demand and how the month is running' },
+  { id: 'accounts',  label: 'Accounts',  note: 'Attachments and how fast paperwork clears' },
+  { id: 'people',    label: 'People',    note: 'Consultants against their targets' },
+  { id: 'inventory', label: 'Inventory', note: 'Stock by model, ageing, and orders awaiting a car' },
+  { id: 'calls',     label: 'Calls',     note: 'What the agent handled on the phone' },
+];
+const TAB_IDS = TABS.map(t => t.id);
 
 export default function App() {
   const [data, setData] = useState(null);
@@ -172,37 +161,24 @@ export default function App() {
     return cleanup;
   }, [loadData]);
 
-  // Which act is on screen, so the rail can mark it.
-  //
-  // This reads positions on scroll rather than using an IntersectionObserver:
-  // the seams are thin, so an observer band narrow enough to mean "at the top"
-  // is one a 40px seam can cross between frames, and the marker never moved off
-  // the first section. Reading which seam was the last to pass the line is
-  // exact, and a rAF gate keeps it to one measurement per painted frame.
-  const [activeSection, setActiveSection] = useState(SECTIONS[0].id);
+  // Which tab is open, read from the hash so back/forward and a pasted link
+  // all work. The scroll spy this replaces measured seam positions on every
+  // frame; with one tab on screen at a time there is nothing to spy on.
+  const readHash = () => {
+    const h = (window.location.hash || '').replace('#', '');
+    return TAB_IDS.includes(h) ? h : TABS[0].id;
+  };
+  const [activeTab, setActiveTab] = useState(readHash);
   useEffect(() => {
-    if (!data) return undefined;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const line = 160;
-      let current = SECTIONS[0].id;
-      SECTIONS.forEach(({ id }) => {
-        const el = document.getElementById(id);
-        if (el && el.getBoundingClientRect().top <= line) current = id;
-      });
-      setActiveSection(current);
+    const onHash = () => {
+      setActiveTab(readHash());
+      // A tab is a new page as far as the reader is concerned, so it starts at
+      // the top rather than halfway down wherever the last one was scrolled to.
+      window.scrollTo({ top: 0 });
     };
-    const onScroll = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    measure();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-      if (frame) cancelAnimationFrame(frame);
-    };
-  }, [data]);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   // Handle active period change
   const handlePeriodChange = async (newPeriod) => {
@@ -238,7 +214,7 @@ export default function App() {
 
   const activePeriodObj = data?.periods?.find(p => p.is_active) || data?.periods?.[0] || {};
 
-  const seam = id => SECTIONS.find(x => x.id === id) || {};
+  const tab = TABS.find(t => t.id === activeTab) || TABS[0];
 
   return (
     <div className="shell">
@@ -247,8 +223,8 @@ export default function App() {
         activePeriod={activePeriodObj.label || ''}
         onPeriodChange={handlePeriodChange}
         liveStatus={liveStatus}
-        sections={SECTIONS}
-        activeSection={activeSection}
+        sections={TABS}
+        activeSection={activeTab}
         onOpenDrawer={handleOpenDrawer}
         onOpenUpload={() => setUploadModalOpen(true)}
         onOpenExport={() => setExportModalOpen(true)}
@@ -265,58 +241,94 @@ export default function App() {
       />
 
       <main className="sheet">
-        <div id="month" style={{ scrollMarginTop: '24px' }}>
-          <HeroMetric kpi={data?.kpi || {}} />
-          <KpiTiles kpi={data?.kpi || {}} trends={data?.trends || {}} />
+        {/* The tab's own title, so the sheet says which department it is
+            showing. The rail marks it too, but the rail is 232px away and the
+            eye is here. */}
+        <div style={{ marginBottom: 22 }}>
+          <h1 style={{ fontSize: 22, letterSpacing: '-0.02em' }}>{tab.label}</h1>
+          {tab.note && (
+            <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 5 }}>
+              {tab.note}
+            </div>
+          )}
         </div>
 
-        <Seam {...seam('sources')} />
+        {activeTab === 'overview' && (
+          <>
+            <HeroMetric kpi={data?.kpi || {}} />
+            <KpiTiles kpi={data?.kpi || {}} trends={data?.trends || {}} />
+            <div style={{ marginTop: 26 }}>
+              <SalesFunnel funnel={data?.funnel || {}} />
+            </div>
+            {/* Where the workbook disagrees with itself belongs on the first
+                screen, not buried at the bottom of the longest tab. */}
+            <div style={{ marginTop: 26 }}>
+              <DataQuality issues={data?.dataQuality || []} />
+            </div>
+          </>
+        )}
 
-      <Visualizations sources={data?.sources || []} models={data?.models || []} />
+        {activeTab === 'sales' && (
+          <>
+            <Visualizations sources={data?.sources || []} models={data?.models || []} />
+            <div style={{ marginBottom: 26 }}>
+              <SalesTimeline refreshKey={data?.kpi?.bookings} />
+            </div>
+            <Trends refreshKey={data?.kpi?.bookings} />
+            <Composition refreshKey={data?.kpi?.bookings} />
+            {/* The funnel lives on Overview. Repeating it here would make the
+                longest tab longer to say something already said. */}
+            <BookingPace orderbook={data?.orderbook || []}
+                         target={Number(data?.kpi?.booking_target) || 0} />
+          </>
+        )}
 
-      <div className="grid-2">
-        <SalesFunnel funnel={data?.funnel || {}} />
-        <Leaderboard board={data?.board || []} />
-      </div>
+        {activeTab === 'accounts' && (
+          <>
+            <div className="grid-2" style={{ marginBottom: 26 }}>
+              <Attachments attachments={data?.attachments || null} />
+              <FolderTat />
+            </div>
+          </>
+        )}
 
-        <Seam {...seam('running')} />
+        {activeTab === 'people' && (
+          <>
+            <div style={{ marginBottom: 26 }}>
+              <Leaderboard board={data?.board || []} />
+            </div>
+            <div className="grid-2">
+              <ConsultantConversion scorecards={data?.scorecards || []} />
+              <Commitments commitments={data?.commitments || []} />
+            </div>
+          </>
+        )}
 
-        <div style={{ marginBottom: 26 }}>
-          <SalesTimeline refreshKey={data?.kpi?.bookings} />
-        </div>
+        {activeTab === 'inventory' && (
+          <>
+            <StockAndModels
+              models={data?.models || []}
+              ageing={data?.ageing || []}
+              activity={data?.activity || []}
+            />
+            <div className="grid-2">
+              <StockAgeing ageing={data?.ageing || []} />
+              <Backorders backorders={data?.backorders || []} />
+            </div>
+          </>
+        )}
 
-        <Trends refreshKey={data?.kpi?.bookings} />
+        {activeTab === 'calls' && <AgentCalls />}
 
-        <Composition refreshKey={data?.kpi?.bookings} />
-
-        <AgentCalls />
-
-      <Analytics
-        orderbook={data?.orderbook || []}
-        commitments={data?.commitments || []}
-        ageing={data?.ageing || []}
-        backorders={data?.backorders || []}
-        scorecards={data?.scorecards || []}
-        attachments={data?.attachments || null}
-        dataQuality={data?.dataQuality || []}
-        kpi={data?.kpi || {}}
-      />
-
-        <Seam {...seam('floor')} />
-
-      <StockAndModels
-        models={data?.models || []}
-        ageing={data?.ageing || []}
-        activity={data?.activity || []}
-      />
-
-      {showTables && (
-        <DataTables
-          orderbook={data?.orderbook || []}
-          sources={data?.sources || []}
-          backorders={data?.backorders || []}
-        />
-      )}
+        {/* The record tables are a drill-down on whatever is on screen, so they
+            follow the tab rather than living on one of them. */}
+        {showTables && (
+          <DataTables
+            orderbook={data?.orderbook || []}
+            sources={data?.sources || []}
+            backorders={data?.backorders || []}
+          />
+        )}
 
       <SheetFooter
         kpi={data?.kpi || {}}

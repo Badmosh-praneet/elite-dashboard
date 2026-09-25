@@ -623,6 +623,68 @@ def sales_trends(
     }
 
 
+@app.get("/api/folder-tat", tags=["dashboard"])
+def folder_tat():
+    """
+    How long paperwork sits before it reaches accounts.
+
+    v_folder_tat has been in the schema all along and shown nowhere. It is the
+    one back-office measure the workbook carries: when a folder was lined up,
+    when it reached accounts, and how many days passed in between. A car can be
+    sold and delivered while its file sits on someone's desk, and nothing else
+    on the sheet would say so.
+
+    Rows with no lined-up date are dropped rather than counted as zero-day
+    turnarounds, which would flatter the average.
+    """
+    if not is_db_ready():
+        return {"rows": [], "total": 0, "with_dates": 0, "avg_days": None,
+                "over_3_days": 0}
+    try:
+        rows = fetch_all("""
+            SELECT registration_id, customer_name, consultant, registration_no,
+                   folder_lined_up_on, folder_given_to_accounts_on,
+                   days_to_accounts, booking_to_registration_days
+              FROM v_folder_tat
+             ORDER BY folder_lined_up_on DESC NULLS LAST, registration_id DESC
+        """)
+    except Exception:
+        log.exception("folder tat failed")
+        return {"rows": [], "total": 0, "with_dates": 0, "avg_days": None,
+                "over_3_days": 0}
+
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["registration_id"],
+            "customer": r["customer_name"],
+            "consultant": r["consultant"],
+            "registration_no": r["registration_no"],
+            "lined_up": r["folder_lined_up_on"].isoformat() if r["folder_lined_up_on"] else None,
+            "to_accounts": r["folder_given_to_accounts_on"].isoformat() if r["folder_given_to_accounts_on"] else None,
+            "days": r["days_to_accounts"],
+        })
+
+    timed = [x["days"] for x in out if x["days"] is not None]
+    # A folder cannot reach accounts before it was lined up, and one row says it
+    # did by ten days - the workbook has those two dates the wrong way round.
+    # Averaging it in turned a real 0.2 days into -0.1, which reads as paperwork
+    # arriving before it exists. Counted and reported instead of silently kept
+    # or silently dropped.
+    sane = [d for d in timed if d >= 0]
+    return {
+        "rows": out,
+        "total": len(out),
+        "with_dates": len(timed),
+        # Rounded to one place: this is a count of days, and two decimals on it
+        # implies a precision the source dates do not have.
+        "avg_days": round(sum(sane) / len(sane), 1) if sane else None,
+        "same_day": sum(1 for d in sane if d == 0),
+        "over_3_days": sum(1 for d in sane if d > 3),
+        "impossible": len(timed) - len(sane),
+    }
+
+
 @app.get("/api/composition", tags=["dashboard"])
 def composition(period: str | None = Query(None, description="Month label; defaults to the active one")):
     """

@@ -108,7 +108,7 @@ const num = v => (v == null ? 0 : Number(v));
 
 /* ---- 1. Booking pace: cumulative actual against the linear target ---- */
 
-function BookingPace({ orderbook = [], target = 0 }) {
+export function BookingPace({ orderbook = [], target = 0 }) {
   const dated = orderbook
     .filter(b => b.booking_date && b.is_current_period !== false)
     .map(b => new Date(b.booking_date));
@@ -180,7 +180,7 @@ function BookingPace({ orderbook = [], target = 0 }) {
 
 const WINDOW_ORDER = ['TILL 12TH', '13 TO 19', '20 TO 26', '27 TO 31'];
 
-function Commitments({ commitments = [] }) {
+export function Commitments({ commitments = [] }) {
   const byWindow = new Map();
   commitments.forEach(c => {
     const k = (c.window_label || '').toUpperCase();
@@ -240,7 +240,7 @@ const BUCKET_FILL = {
   '91-180': 'var(--viz-a4)', '180+': 'var(--viz-a5)',
 };
 
-function StockAgeing({ ageing = [] }) {
+export function StockAgeing({ ageing = [] }) {
   // Recharts sorts the legend by dataKey, and the bucket labels sort
   // lexicographically - "180+" lands between "0-30" and "31-60", so the ordinal
   // ramp was listed out of sequence. Keying the rows by position instead makes
@@ -299,7 +299,7 @@ function StockAgeing({ ageing = [] }) {
 
 /* ---- 4. Backorders: who has waited longest, and is there a car for them ---- */
 
-function Backorders({ backorders = [] }) {
+export function Backorders({ backorders = [] }) {
   // The panel used to plot all 21 rows, but ten of them are carry-over from
   // earlier months sitting at ~500 days. They set the scale, so this month's
   // orders - the ones anyone can still act on - were drawn as stubs, and the
@@ -372,7 +372,7 @@ function Backorders({ backorders = [] }) {
 
 /* ---- 5. Consultant conversion ---- */
 
-function ConsultantConversion({ scorecards = [] }) {
+export function ConsultantConversion({ scorecards = [] }) {
   const data = scorecards
     .filter(s => s.row_kind === 'CONSULTANT' && num(s.total_leads) > 0)
     .map(s => ({
@@ -418,7 +418,7 @@ function ConsultantConversion({ scorecards = [] }) {
 
 /* ---- 6. Attachment rates: ratios against a limit -> meters, not a chart ---- */
 
-function Attachments({ attachments }) {
+export function Attachments({ attachments }) {
   const a = attachments || {};
   const regs = num(a.registrations);
   const rows = [
@@ -502,7 +502,7 @@ function SeverityMark({ severity }) {
 
 const SEVERITY_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
 
-function DataQuality({ issues = [] }) {
+export function DataQuality({ issues = [] }) {
   const order = { high: 0, medium: 1, low: 2 };
   const rows = [...issues].sort(
     (a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3));

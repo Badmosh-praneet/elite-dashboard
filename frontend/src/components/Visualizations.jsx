@@ -14,7 +14,7 @@ import {
   Tooltip as RechartsTooltip, Legend, LabelList,
 } from 'recharts';
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 
 function Tip({ active, payload, label, rows }) {
   if (!active || !payload || !payload.length) return null;
@@ -27,7 +27,7 @@ function Tip({ active, payload, label, rows }) {
       borderRadius: 'var(--radius-sm)',
       boxShadow: 'var(--shadow-md)',
       color: 'var(--ink)',
-      fontSize: '12px',
+      fontSize: 'var(--fs-small)',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
       {payload.map((entry, i) => (
@@ -53,7 +53,7 @@ function Empty({ children }) {
   return (
     <div style={{
       display: 'flex', height: '100%', alignItems: 'center',
-      justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 13,
+      justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 'var(--fs-body)',
     }}>
       {children}
     </div>
@@ -86,7 +86,7 @@ export default function Visualizations({ sources = [], models = [] }) {
       <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="panel-header">
           <h2>Lead Sources</h2>
-          <span style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>
+          <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
             Enquiries this period, largest first
           </span>
         </div>
@@ -107,7 +107,7 @@ export default function Visualizations({ sources = [], models = [] }) {
                   width={146}
                   axisLine={false}
                   tickLine={false}
-                  tick={{ ...AXIS, fontSize: 11 }}
+                  tick={{ ...AXIS, fontSize: 'var(--fs-small)' }}
                   interval={0}
                 />
                 <RechartsTooltip
@@ -118,7 +118,7 @@ export default function Visualizations({ sources = [], models = [] }) {
                   <LabelList
                     dataKey="Leads"
                     position="right"
-                    style={{ fill: 'var(--ink-muted)', fontSize: 11 }}
+                    style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }}
                   />
                 </Bar>
               </BarChart>
@@ -133,7 +133,7 @@ export default function Visualizations({ sources = [], models = [] }) {
       <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="panel-header">
           <h2>Model Demand vs Supply</h2>
-          <span style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>
+          <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
             Bookings against cars on the floor
           </span>
         </div>
@@ -160,7 +160,7 @@ export default function Visualizations({ sources = [], models = [] }) {
                   cursor={{ fill: 'var(--grid)', opacity: 0.4 }}
                 />
                 <Legend
-                  wrapperStyle={{ fontSize: '12px', color: 'var(--ink-muted)', paddingTop: '10px' }}
+                  wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: '10px' }}
                   iconType="circle"
                   payload={[
                     { value: 'Bookings', type: 'circle', id: 'b', color: 'var(--viz-1)' },

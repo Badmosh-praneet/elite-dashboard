@@ -28,7 +28,7 @@ import { api, n0 } from '../api/client';
 function Stat({ label, value, tone }) {
   return (
     <div>
-      <div style={{ fontSize: 10.5, textTransform: 'uppercase',
+      <div style={{ fontSize: 'var(--fs-micro)', textTransform: 'uppercase',
                     letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
         {label}
       </div>
@@ -69,21 +69,21 @@ export default function FolderTat() {
     <div className="panel">
       <div className="panel-header" style={{ marginBottom: 14 }}>
         <h2>Folder turnaround</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           Days from a file being lined up to accounts receiving it
         </span>
       </div>
 
       {error ? (
-        <div style={{ display: 'flex', gap: 8, fontSize: 13,
+        <div style={{ display: 'flex', gap: 8, fontSize: 'var(--fs-body)',
                       color: 'var(--critical)' }}>
           <AlertTriangle size={14} style={{ flex: 'none', marginTop: 2 }} />
           <span>{error}</span>
         </div>
       ) : !data ? (
-        <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>Reading the files…</div>
+        <div style={{ fontSize: 'var(--fs-body)', color: 'var(--ink-muted)' }}>Reading the files…</div>
       ) : !rows.length ? (
-        <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
+        <div style={{ fontSize: 'var(--fs-body)', color: 'var(--ink-muted)' }}>
           No registrations have been filed yet.
         </div>
       ) : (
@@ -102,7 +102,7 @@ export default function FolderTat() {
               display: 'flex', alignItems: 'flex-start', gap: 8,
               margin: '0 0 14px', padding: '9px 12px',
               border: '1px solid var(--warning)', background: 'var(--critical-light)',
-              fontSize: 11.5, lineHeight: 1.5, color: 'var(--warning)',
+              fontSize: 'var(--fs-small)', lineHeight: 1.5, color: 'var(--warning)',
             }}>
               <AlertTriangle size={14} style={{ flex: 'none', marginTop: 1 }} />
               <span>
@@ -154,7 +154,7 @@ export default function FolderTat() {
 
           {rows.length > 10 && (
             <button className="rail-quiet" onClick={() => setShowAll(s => !s)}
-                    style={{ marginTop: 12, padding: '5px 12px', fontSize: 12 }}>
+                    style={{ marginTop: 12, padding: '5px 12px', fontSize: 'var(--fs-small)' }}>
               {showAll ? 'Show recent only' : `Show all ${n0(rows.length)} files`}
             </button>
           )}

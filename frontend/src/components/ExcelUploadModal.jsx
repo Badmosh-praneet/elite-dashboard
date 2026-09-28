@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import useClosing from './useClosing';
 import { X, UploadCloud, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { uploadReportFile, uploadWorkbookInBackground, n0 } from '../api/client';
 
@@ -52,7 +53,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
 
   const fileInputRef = useRef(null);
 
-  if (!isOpen) return null;
+  const { render, leaving } = useClosing(isOpen);
+  if (!render) return null;
 
   const getFormatBadge = (name) => {
     const ext = (name.split('.').pop() || '').toLowerCase();
@@ -139,8 +141,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
   const BadgeIcon = badge?.icon || FileSpreadsheet;
 
   return (
-    <div className="drawer-scrim" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{
+    <div className={`drawer-scrim ${leaving ? 'is-leaving' : ''}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <div className="xp-panel" style={{
         background: 'var(--surface)',
         border: '1px solid var(--border-strong)',
         borderRadius: 'var(--radius-lg)',
@@ -151,7 +153,6 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        animation: 'popIn 0.2s ease',
       }}>
         <div style={{
           padding: '18px 24px',
@@ -161,8 +162,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           alignItems: 'center',
         }}>
           <div>
-            <h2 style={{ fontSize: '16px' }}>Ingest DSR Report</h2>
-            <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--ink-muted)' }}>
+            <h2 style={{ fontSize: 'var(--fs-head)' }}>Ingest DSR Report</h2>
+            <p style={{ margin: '2px 0 0', fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               Loads bookings, stock, enquiries and targets. Choose below whether it
               replaces the month or is added to it.
             </p>
@@ -190,10 +191,10 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
             }}
           >
             <BadgeIcon size={36} style={{ color: file ? 'var(--s1)' : 'var(--ink-muted)', marginBottom: '8px' }} />
-            <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>
+            <div style={{ fontWeight: '600', fontSize: 'var(--fs-body)', marginBottom: '4px' }}>
               {file ? file.name : 'Drop report file here, or browse'}
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>
+            <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               {file
                 ? `${(file.size / 1024).toFixed(1)} KB`
                 : 'Supports Excel (.xlsx, .xlsm), CSV (.csv), and Text (.txt, .tsv)'}
@@ -205,7 +206,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   display: 'inline-block',
                   padding: '3px 10px',
                   borderRadius: '999px',
-                  fontSize: '11.5px',
+                  fontSize: 'var(--fs-small)',
                   fontWeight: '700',
                   background: badge.bg,
                   color: badge.color,
@@ -227,7 +228,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           {/* How this file meets the month already in the database. */}
           <div>
             <div style={{
-              fontSize: 12, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
+              fontSize: 'var(--fs-small)', fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
             }}>How to apply it</div>
             <div style={{ display: 'flex', gap: 8 }}>
               {[
@@ -254,10 +255,10 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                       cursor: locked ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    <b style={{ fontSize: 12.5, color: on ? 'var(--s1)' : 'var(--ink)' }}>
+                    <b style={{ fontSize: 'var(--fs-small)', color: on ? 'var(--s1)' : 'var(--ink)' }}>
                       {o.title}
                     </b>
-                    <span style={{ fontSize: 11, color: 'var(--ink-muted)', lineHeight: 1.4 }}>
+                    <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', lineHeight: 1.4 }}>
                       {o.note}
                     </span>
                   </button>
@@ -271,7 +272,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               chooses that month, and appending is the only safe pairing. */}
           <div>
             <div style={{
-              fontSize: 12, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
+              fontSize: 'var(--fs-small)', fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
             }}>This file covers</div>
             <div style={{ display: 'flex', gap: 6, marginBottom: needsDate ? 10 : 0 }}>
               {['day', 'week', 'month'].map(c => (
@@ -282,7 +283,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   aria-pressed={covers === c}
                   style={{
                     flex: 1, textTransform: 'capitalize', padding: '7px 10px',
-                    fontSize: 12.5,
+                    fontSize: 'var(--fs-small)',
                     background: covers === c ? 'var(--s1-light)' : 'var(--surface-sub)',
                     borderColor: covers === c ? 'var(--s1)' : 'var(--border)',
                     color: covers === c ? 'var(--s1)' : 'var(--ink-2)',
@@ -329,12 +330,12 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   </label>
                 </div>
                 {rangeBackwards && (
-                  <div style={{ fontSize: 11.5, color: 'var(--critical)', marginTop: 6 }}>
+                  <div style={{ fontSize: 'var(--fs-small)', color: 'var(--critical)', marginTop: 6 }}>
                     The end date is before the start date.
                   </div>
                 )}
                 {rangeCrossesMonths && (
-                  <div style={{ fontSize: 11.5, color: 'var(--warning)', marginTop: 6 }}>
+                  <div style={{ fontSize: 'var(--fs-small)', color: 'var(--warning)', marginTop: 6 }}>
                     This week spans two months. It will be filed under{' '}
                     <b>{new Date(`${coversDate}T00:00:00Z`).toLocaleDateString('en-IN',
                         { month: 'long', year: 'numeric', timeZone: 'UTC' })}</b>,
@@ -371,7 +372,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               background: replacing.missing ? 'var(--surface-sub)' : 'var(--critical-light)',
               borderRadius: 'var(--radius-sm)',
               padding: '11px 14px',
-              fontSize: '12.5px',
+              fontSize: 'var(--fs-small)',
               lineHeight: 1.6,
             }}>
               {replacing.missing ? (
@@ -423,7 +424,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               display: 'flex',
               alignItems: 'center',
               gap: '12px',
-              fontSize: '13px',
+              fontSize: 'var(--fs-body)',
             }}>
               <Loader2 size={20} className="animate-spin" style={{ color: 'var(--s1)' }} />
               <div>
@@ -436,7 +437,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                     half. Without saying so, a spinner at 60 seconds is
                     indistinguishable from a hung one, and people close the tab
                     on an ingest that was going to succeed. */}
-                <div style={{ fontSize: '11.5px', color: 'var(--ink-muted)' }}>
+                <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
                   {step ? step.charAt(0).toUpperCase() + step.slice(1) + ' — ' : ''}
                   {elapsed < 120
                     ? 'this usually takes about two minutes. Leave this open.'
@@ -453,7 +454,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               borderRadius: '8px',
               padding: '12px 14px',
               color: 'var(--critical)',
-              fontSize: '12.5px',
+              fontSize: 'var(--fs-small)',
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
@@ -469,7 +470,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               border: '1px solid var(--s3)',
               borderRadius: '8px',
               padding: '14px',
-              fontSize: '12.5px',
+              fontSize: 'var(--fs-small)',
             }}>
               <div style={{ fontWeight: '700', color: 'var(--good-text)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                 <CheckCircle2 size={16} />
@@ -481,8 +482,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                     background: 'var(--surface)', padding: '6px 10px', borderRadius: '4px', 
                     border: '1px solid var(--border)', wordBreak: 'break-word', lineHeight: '1.4'
                   }}>
-                    <b style={{ display: 'block', fontSize: '14px', marginBottom: '2px' }}>{cnt}</b> 
-                    <span style={{ color: 'var(--ink-muted)', fontSize: '11px', textTransform: 'uppercase' }}>{tbl}</span>
+                    <b style={{ display: 'block', fontSize: 'var(--fs-body)', marginBottom: '2px' }}>{cnt}</b> 
+                    <span style={{ color: 'var(--ink-muted)', fontSize: 'var(--fs-small)', textTransform: 'uppercase' }}>{tbl}</span>
                   </div>
                 ))}
               </div>

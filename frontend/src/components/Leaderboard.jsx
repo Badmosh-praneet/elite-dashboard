@@ -39,7 +39,7 @@ export default function Leaderboard({ board = [] }) {
       <div className="panel-head">
         <div>
           <h2>Consultant Leaderboard</h2>
-          <div style={{ fontSize: '12px', color: 'var(--ink-muted)', marginTop: '2px' }}>
+          <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: '2px' }}>
             Ranked by bookings against target
           </div>
         </div>
@@ -85,7 +85,7 @@ export default function Leaderboard({ board = [] }) {
                     <td className="num" style={{ fontWeight: '600' }}>
                       {n0(rt)}
                       {rtTgt > 0 && (
-                        <span style={{ fontSize: '11px', color: 'var(--ink-muted)', fontWeight: 'normal', marginLeft: '4px' }}>
+                        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', fontWeight: 'normal', marginLeft: '4px' }}>
                           / {n0(rtTgt)}
                         </span>
                       )}

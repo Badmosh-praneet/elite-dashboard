@@ -25,7 +25,7 @@ import {
 } from 'recharts';
 import { api, n0 } from '../api/client';
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 
 /* Same ordinal ramp the stacks use, so a model is the same colour wherever it
    appears on the sheet. "Other" stays the quietest thing in the ring. */
@@ -43,7 +43,7 @@ function Tip({ active, payload, total }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--grid)',
       padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 12,
+      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.name}</div>
       <div style={{ color: 'var(--ink-2)' }}>
@@ -59,7 +59,7 @@ function BarTip({ active, payload, label }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--grid)',
       padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 12,
+      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
       {payload.map((s, i) => (
@@ -81,12 +81,12 @@ function Donut({ title, note, data, unit }) {
     <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="panel-header" style={{ marginBottom: 10 }}>
         <h2>{title}</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{note}</span>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>{note}</span>
       </div>
       <div style={{ height: 240, width: '100%', position: 'relative' }}>
         {!data || !data.length ? (
           <div style={{ display: 'flex', height: '100%', alignItems: 'center',
-                        justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 13 }}>
+                        justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 'var(--fs-body)' }}>
             Nothing recorded yet.
           </div>
         ) : (
@@ -101,7 +101,7 @@ function Donut({ title, note, data, unit }) {
                   ))}
                 </Pie>
                 <RechartsTooltip content={p => <Tip {...p} total={total} />} />
-                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)' }}
+                <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}
                         iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
@@ -116,7 +116,7 @@ function Donut({ title, note, data, unit }) {
                             color: 'var(--ink)', lineHeight: 1 }}>
                 {n0(total)}
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--ink-muted)',
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-muted)',
                             textTransform: 'uppercase', letterSpacing: '0.08em',
                             marginTop: 3 }}>
                 {unit}
@@ -136,7 +136,7 @@ function Split({ label, data }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 11, textTransform: 'uppercase',
+        <span style={{ fontSize: 'var(--fs-small)', textTransform: 'uppercase',
                        letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
           {label}
         </span>
@@ -151,7 +151,7 @@ function Split({ label, data }) {
       <div style={{ display: 'flex', gap: 16, marginTop: 7, flexWrap: 'wrap' }}>
         {data.map((d, i) => (
           <span key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 6,
-                                      fontSize: 12, color: 'var(--ink-2)' }}>
+                                      fontSize: 'var(--fs-small)', color: 'var(--ink-2)' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%',
                            background: colourFor(d.name, i) }} />
             {d.name}
@@ -183,7 +183,7 @@ export default function Composition({ refreshKey }) {
     return (
       <section style={{ marginBottom: 26 }}>
         <div className="panel">
-          <div style={{ color: 'var(--critical)', fontSize: 13 }}>{error}</div>
+          <div style={{ color: 'var(--critical)', fontSize: 'var(--fs-body)' }}>{error}</div>
         </div>
       </section>
     );
@@ -198,7 +198,7 @@ export default function Composition({ refreshKey }) {
     <section style={{ marginBottom: 26 }}>
       <div className="panel-header" style={{ marginBottom: 14 }}>
         <h2>How the month splits</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           {!data ? 'Reading the month…'
             : `${data.period} — every ring totals the ${n0(
                 (data.order_book || []).reduce((a, d) => a + d.value, 0))} bookings`}
@@ -224,7 +224,7 @@ export default function Composition({ refreshKey }) {
         <div className="panel">
           <div className="panel-header" style={{ marginBottom: 16 }}>
             <h2>Two-way splits</h2>
-            <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+            <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               Where the car came from, and who sold it
             </span>
           </div>
@@ -235,7 +235,7 @@ export default function Composition({ refreshKey }) {
         <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="panel-header" style={{ marginBottom: 14 }}>
             <h2>Which days are busy</h2>
-            <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+            <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               {peakEnq && peakBook
                 ? `Enquiries peak ${peakEnq.day} (${n0(peakEnq.enquiries)}), `
                   + `bookings ${peakBook.day} (${n0(peakBook.bookings)})`
@@ -256,7 +256,7 @@ export default function Composition({ refreshKey }) {
                        tickLine={false} tick={AXIS} />
                 <RechartsTooltip content={BarTip}
                                  cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
-                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)', paddingTop: 8 }}
+                <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: 8 }}
                         iconType="circle" />
                 <Bar yAxisId="e" dataKey="enquiries" name="Enquiries"
                      fill="var(--viz-1)" radius={[3, 3, 0, 0]} />

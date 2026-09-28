@@ -48,7 +48,7 @@ export default function Header({
             color: 'var(--shu-ink)',
             fontFamily: 'var(--font-display)',
             fontWeight: '600',
-            fontSize: '14px',
+            fontSize: 'var(--fs-body)',
             letterSpacing: '0.04em',
             borderRadius: '2px',
             transform: 'rotate(-2.5deg)',
@@ -58,7 +58,7 @@ export default function Header({
             Volkswagen Elite Motors
           </h1>
         </div>
-        <div style={{ color: 'var(--ink-muted)', fontSize: '12.5px', letterSpacing: '0.04em' }}>
+        <div style={{ color: 'var(--ink-muted)', fontSize: 'var(--fs-small)', letterSpacing: '0.04em' }}>
           {span ? (
             <span>
               {span} &nbsp;·&nbsp; Hosur Road, Bengaluru

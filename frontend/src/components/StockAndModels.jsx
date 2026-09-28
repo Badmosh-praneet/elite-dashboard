@@ -52,7 +52,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
         <div className="panel-head">
           <div>
             <h2>Model Performance &amp; Inventory</h2>
-            <div style={{ fontSize: '12px', color: 'var(--ink-muted)', marginTop: '2px' }}>
+            <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: '2px' }}>
               Bookings and free stock breakdown by vehicle model
             </div>
           </div>
@@ -123,7 +123,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
           <div className="panel-head" style={{ marginBottom: '10px' }}>
             <div>
               <h2>Inventory Ageing Distribution</h2>
-              <div style={{ fontSize: '12px', color: 'var(--ink-muted)', marginTop: '2px' }}>
+              <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: '2px' }}>
                 Days on floor since Volkswagen billing date
               </div>
             </div>
@@ -140,7 +140,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 7 }}>
                   <span style={{ width: 7, height: 7, flex: 'none', background: b.fill }} />
-                  <span style={{ fontSize: '10px', color: 'var(--ink-muted)', letterSpacing: '0.04em' }}>
+                  <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-muted)', letterSpacing: '0.04em' }}>
                     {b.label}
                   </span>
                 </div>
@@ -151,7 +151,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
                 }}>
                   {n0(b.count)}
                 </div>
-                <div style={{ fontSize: '10.5px', color: 'var(--ink-muted)', marginTop: '5px' }}>
+                <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-muted)', marginTop: '5px' }}>
                   {b.sub}
                 </div>
               </div>
@@ -195,10 +195,10 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
         <div style={{ flex: 1, borderTop: '1px solid var(--grid)', paddingTop: '14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
             <History size={15} style={{ color: 'var(--s1)' }} />
-            <h3 style={{ margin: 0, fontSize: '13px' }}>Recently Recorded</h3>
+            <h3 style={{ margin: 0, fontSize: 'var(--fs-body)' }}>Recently Recorded</h3>
           </div>
 
-          <div style={{ maxHeight: '150px', overflowY: 'auto', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ maxHeight: '150px', overflowY: 'auto', fontSize: 'var(--fs-small)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {activity.length > 0 ? (
               activity.slice(0, 5).map((act, i) => (
                 <div key={i} style={{

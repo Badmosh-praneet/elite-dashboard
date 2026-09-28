@@ -34,7 +34,7 @@ const GRAINS = [
   { key: 'week', label: 'Week' },
 ];
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 
 /* The ordinal ramp, which exists for exactly this - categories that need to be
    told apart without any of them shouting. "Other" is deliberately the quietest
@@ -71,7 +71,7 @@ function Tip({ active, payload, grain, unit }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--grid)',
       padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 12,
+      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
       maxWidth: 260,
     }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{heading(p.key, grain)}</div>
@@ -105,7 +105,7 @@ function Panel({ title, note, children, height = 260 }) {
     <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="panel-header" style={{ marginBottom: 14 }}>
         <h2>{title}</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{note}</span>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>{note}</span>
       </div>
       <div style={{ height, width: '100%' }}>{children}</div>
     </div>
@@ -116,7 +116,7 @@ function Message({ children, tone }) {
   return (
     <div style={{
       display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center',
-      color: tone === 'bad' ? 'var(--critical)' : 'var(--ink-muted)', fontSize: 13,
+      color: tone === 'bad' ? 'var(--critical)' : 'var(--ink-muted)', fontSize: 'var(--fs-body)',
     }}>
       {children}
     </div>
@@ -195,14 +195,14 @@ export default function Trends({ refreshKey }) {
                 onClick={() => setGrain(g.key)}
                 aria-pressed={grain === g.key}
                 className={grain === g.key ? 'primary' : ''}
-                style={{ padding: '4px 12px', fontSize: 12 }}
+                style={{ padding: '4px 12px', fontSize: 'var(--fs-small)' }}
               >
                 {g.label}
               </button>
             ))}
           </div>
         </div>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           {loading ? 'Reading the month…'
             : `${data?.period ?? ''} — ${n0(totals.enquiries)} enquiries, `
               + `${n0(totals.bookings)} bookings`
@@ -219,7 +219,7 @@ export default function Trends({ refreshKey }) {
           display: 'flex', alignItems: 'flex-start', gap: 8,
           margin: '0 0 14px', padding: '9px 12px',
           border: '1px solid var(--warning)', background: 'var(--critical-light)',
-          fontSize: 11.5, lineHeight: 1.5, color: 'var(--warning)',
+          fontSize: 'var(--fs-small)', lineHeight: 1.5, color: 'var(--warning)',
         }}>
           <AlertTriangle size={14} style={{ flex: 'none', marginTop: 1 }} />
           <span>
@@ -241,7 +241,7 @@ export default function Trends({ refreshKey }) {
                 <YAxis axisLine={false} tickLine={false} tick={AXIS} />
                 <RechartsTooltip content={p => <Tip {...p} grain={grain} unit="count" />}
                                  cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
-                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)', paddingTop: 8 }}
+                <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: 8 }}
                         iconType="circle" />
                 {(data?.sources || []).map((s, i) => (
                   <Bar key={s} dataKey={`s_${s}`} name={s} stackId="src"
@@ -262,7 +262,7 @@ export default function Trends({ refreshKey }) {
                 <YAxis axisLine={false} tickLine={false} tick={AXIS} />
                 <RechartsTooltip content={p => <Tip {...p} grain={grain} unit="count" />}
                                  cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
-                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)', paddingTop: 8 }}
+                <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: 8 }}
                         iconType="circle" />
                 {(data?.models || []).map((m, i) => (
                   <Bar key={m} dataKey={`m_${m}`} name={m} stackId="mdl"
@@ -291,7 +291,7 @@ export default function Trends({ refreshKey }) {
                      tick={AXIS} tickFormatter={v => `${Math.round(v / 100000)}L`} />
               <RechartsTooltip content={p => <Tip {...p} grain={grain} unit="mixed" />}
                                cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)', paddingTop: 8 }}
+              <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: 8 }}
                       iconType="circle" />
               <Bar yAxisId="pct" dataKey="conversion" name="Conversion %"
                    fill="var(--viz-1)" radius={[3, 3, 0, 0]} />

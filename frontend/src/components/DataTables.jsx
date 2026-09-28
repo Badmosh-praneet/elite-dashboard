@@ -27,7 +27,7 @@ function StatusPill({ value }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
-      fontSize: 11.5, color: 'var(--ink-2)', whiteSpace: 'nowrap',
+      fontSize: 'var(--fs-small)', color: 'var(--ink-2)', whiteSpace: 'nowrap',
     }}>
       <span style={{
         width: 6, height: 6, flex: 'none', borderRadius: '50%', background: s.tint,
@@ -64,8 +64,8 @@ const TABS = {
         key: 'crm_entry_done', label: 'In CRM',
         value: r => (r.crm_entry_done === false ? 'Pending' : r.crm_entry_done ? 'Yes' : ''),
         render: r => (r.crm_entry_done === false
-          ? <span style={{ color: 'var(--critical)', fontSize: 11.5 }}>Pending</span>
-          : <span style={{ color: 'var(--ink-muted)', fontSize: 11.5 }}>Yes</span>),
+          ? <span style={{ color: 'var(--critical)', fontSize: 'var(--fs-small)' }}>Pending</span>
+          : <span style={{ color: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }}>Yes</span>),
       },
       {
         key: 'booking_date', label: 'Date', muted: true,
@@ -111,7 +111,7 @@ const TABS = {
         value: r => (r.is_current_period ? 'This month' : 'Carried over'),
         render: r => (
           <span style={{
-            fontSize: 11.5,
+            fontSize: 'var(--fs-small)',
             color: r.is_current_period ? 'var(--ink-2)' : 'var(--ink-muted)',
           }}>
             {r.is_current_period ? 'This month' : 'Carried over'}
@@ -197,7 +197,7 @@ export default function DataTables({ orderbook = [], sources = [], backorders = 
       <div className="panel-head" style={{ flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
         <div>
           <h2>Records</h2>
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3 }}>
+          <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 3 }}>
             {query
               ? `${n0(visible.length)} of ${n0(rows.length)} rows match “${query}”`
               : `${n0(rows.length)} rows`}

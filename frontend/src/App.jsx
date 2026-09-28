@@ -235,7 +235,7 @@ function Dashboard() {
         <div style={{ marginBottom: 22 }}>
           <h1 style={{ fontSize: 22, letterSpacing: '-0.02em' }}>{page.label}</h1>
           {page.note && (
-            <div style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 5 }}>
+            <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 5 }}>
               {page.note}
             </div>
           )}

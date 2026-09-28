@@ -35,7 +35,7 @@ export default function Way1ActionBar({
     <div className="way1-bar">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
         <span className="way1-badge-pill">Direct entry</span>
-        <div style={{ fontSize: '12.5px', color: 'var(--ink-2)' }}>
+        <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-2)' }}>
           Anything recorded here joins the shared record, and the sheet redraws once it lands.
         </div>
       </div>

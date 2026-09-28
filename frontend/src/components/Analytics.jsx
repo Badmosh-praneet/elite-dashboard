@@ -19,13 +19,13 @@ import { n0, pct } from '../api/client';
 
 /* ---- shared chart chrome ---- */
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 11 };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 // Solid hairlines rather than dashes. A dashed grid is a second texture
 // competing with the bars for attention; a continuous 1px rule reads as a
 // measuring line and then disappears, which is all a gridline should do.
 const GRID = { stroke: 'var(--grid)', strokeWidth: 1, vertical: false };
 const LEGEND = {
-  wrapperStyle: { fontSize: '12px', color: 'var(--ink-muted)', paddingTop: '10px' },
+  wrapperStyle: { fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: '10px' },
   iconType: 'circle',
 };
 
@@ -41,7 +41,7 @@ function OrderedLegend({ items }) {
   return (
     <ul style={{
       display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px 16px',
-      listStyle: 'none', margin: 0, padding: '10px 0 0', fontSize: 12,
+      listStyle: 'none', margin: 0, padding: '10px 0 0', fontSize: 'var(--fs-small)',
       color: 'var(--ink-muted)',
     }}>
       {items.map(it => (
@@ -64,7 +64,7 @@ function Tip({ active, payload, label, suffix = '', title }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--grid)',
       padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: '12px',
+      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{title || label}</div>
       {payload.map((p, i) => (
@@ -88,13 +88,13 @@ function Panel({ title, sub, children, empty, height = 300 }) {
     <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="panel-header" style={{ marginBottom: 10 }}>
         <h2>{title}</h2>
-        {sub && <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{sub}</span>}
+        {sub && <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>{sub}</span>}
       </div>
       <div style={{ height, width: '100%' }}>
         {empty ? (
           <div style={{
             display: 'flex', height: '100%', alignItems: 'center',
-            justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 13,
+            justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 'var(--fs-body)',
           }}>
             No data available
           </div>
@@ -220,11 +220,11 @@ export function Commitments({ commitments = [] }) {
           />
           <Bar dataKey="Committed" fill="var(--viz-1)" radius={[3, 3, 0, 0]}>
             <LabelList dataKey="Committed" position="top"
-                       style={{ fill: 'var(--ink-muted)', fontSize: 11 }} />
+                       style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }} />
           </Bar>
           <Bar dataKey="Achieved" fill="var(--viz-2)" radius={[3, 3, 0, 0]}>
             <LabelList dataKey="Achieved" position="top"
-                       style={{ fill: 'var(--ink-muted)', fontSize: 11 }} />
+                       style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -339,7 +339,7 @@ export function Backorders({ backorders = [] }) {
           <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
                  tickFormatter={v => `${v}d`} />
           <YAxis type="category" dataKey="who" width={132} axisLine={false}
-                 tickLine={false} tick={{ ...AXIS, fontSize: 11 }} interval={0} />
+                 tickLine={false} tick={{ ...AXIS, fontSize: 'var(--fs-small)' }} interval={0} />
           <RechartsTooltip
             content={props => {
               const p = props.payload && props.payload[0];
@@ -361,7 +361,7 @@ export function Backorders({ backorders = [] }) {
               dataKey="Waiting"
               position="right"
               formatter={v => `${v}d`}
-              style={{ fill: 'var(--ink-muted)', fontSize: 11 }}
+              style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }}
             />
           </Bar>
         </BarChart>
@@ -398,7 +398,7 @@ export function ConsultantConversion({ scorecards = [] }) {
           <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
                  tickFormatter={v => `${v}%`} />
           <YAxis type="category" dataKey="consultant" width={128} axisLine={false}
-                 tickLine={false} tick={{ ...AXIS, fontSize: 11 }} interval={0} />
+                 tickLine={false} tick={{ ...AXIS, fontSize: 'var(--fs-small)' }} interval={0} />
           <RechartsTooltip content={props => <Tip {...props} suffix="%" />}
                            cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
           <Legend
@@ -443,8 +443,8 @@ export function Attachments({ attachments }) {
           return (
             <div key={r.label}>
               <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 6 }}>
-                <span style={{ fontSize: 13, color: 'var(--ink-2)' }}>{r.label}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--ink)', fontWeight: 700 }}>
+                <span style={{ fontSize: 'var(--fs-body)', color: 'var(--ink-2)' }}>{r.label}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-body)', color: 'var(--ink)', fontWeight: 700 }}>
                   {n0(r.value)}<span style={{ color: 'var(--ink-muted)', fontWeight: 400 }}>
                     {' '}/ {n0(regs)} · {pct(share)}
                   </span>
@@ -524,17 +524,17 @@ export function DataQuality({ issues = [] }) {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
                 <SeverityMark severity={sev} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
+                <span style={{ fontSize: 'var(--fs-body)', fontWeight: 600, color: 'var(--ink)' }}>
                   {r.issue}
                 </span>
                 <span style={{
-                  marginLeft: 'auto', fontSize: 11, color: 'var(--ink-muted)',
+                  marginLeft: 'auto', fontSize: 'var(--fs-small)', color: 'var(--ink-muted)',
                   whiteSpace: 'nowrap',
                 }}>
                   {SEVERITY_LABEL[sev]} · {n0(r.affected_rows)} rows
                 </span>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--ink-muted)', lineHeight: 1.5,
+              <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', lineHeight: 1.5,
                             paddingLeft: 23 }}>
                 {r.detail}
               </div>

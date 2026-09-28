@@ -118,7 +118,7 @@ body {
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-main);
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-wrap: pretty;
@@ -182,11 +182,11 @@ h1 {
    put it on fourteen panel headings and it is just another body face. */
 h2 {
   font-family: var(--font-main);
-  font-size: 14.5px;
+  font-size: var(--fs-lead);
   font-weight: 600;
   letter-spacing: -0.005em;
 }
-h3 { font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
+h3 { font-size: var(--fs-small); font-weight: 600; letter-spacing: 0; }
 
 /* A panel title is a title. The vermilion seal-mark that used to precede each
    one is gone: fourteen identical marks down a page is decoration, not
@@ -197,7 +197,7 @@ h3 { font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
   align-items: center;
   gap: 9px;
   font-family: var(--font-main);
-  font-size: 14.5px;
+  font-size: var(--fs-lead);
   font-weight: 600;
   letter-spacing: -0.005em;
 }
@@ -206,7 +206,7 @@ h3 { font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
 
 button, select, input, textarea {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -258,7 +258,7 @@ button.primary:hover {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: var(--fs-small);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--good-text);
@@ -303,7 +303,7 @@ button.primary:hover {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.15em;
@@ -315,7 +315,7 @@ button.primary:hover {
 .w1-btn {
   padding: 8px 14px;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   background: var(--surface-sub);
   border: 1px solid var(--border);
@@ -407,7 +407,7 @@ button.primary:hover {
   flex-direction: column;
 }
 .kpi-tile .label {
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   font-weight: 500;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -434,7 +434,7 @@ button.primary:hover {
   align-items: center;
 }
 .kpi-tile .sub {
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
   margin-top: 8px;
   line-height: 1.45;
@@ -447,6 +447,27 @@ button.primary:hover {
 .kpi-tile .sub.alert { color: var(--critical); font-weight: 600; }
 .kpi-tile .sub.good { color: var(--good); font-weight: 600; }
 
+:root {
+  /* One type scale.
+     ------------------------------------------------------------------
+     This sheet carried twenty distinct font sizes across two hundred
+     declarations - 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 14.5,
+     15, 16, 17 and up. Six of them lived inside two and a half pixels of
+     each other. Nobody can see the difference between 12px and 12.5px, so
+     individually each was harmless and collectively they meant the page had
+     no scale at all, only a long history of one-off decisions.
+
+     Five steps now cover everything dense. The display sizes above these -
+     19, 22, 24, 26, 32, 36 and the hero's clamp() - are deliberately left
+     alone: there are nine of them, each used once or twice, and each is a
+     choice about one headline rather than drift. */
+  --fs-micro: 10.5px;   /* uppercase eyebrows and column heads */
+  --fs-small: 12px;     /* secondary text, pills, captions */
+  --fs-body: 13.5px;    /* table text and prose */
+  --fs-lead: 15px;      /* the line under a panel title */
+  --fs-head: 17px;      /* sub-headings inside a panel */
+}
+
 /* Table Styling */
 .table-wrap {
   overflow-x: auto;
@@ -456,14 +477,14 @@ button.primary:hover {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   text-align: left;
 }
 th {
   background: transparent;
   color: var(--ink-muted);
   font-weight: 500;
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   padding: 10px 14px 8px;
@@ -478,6 +499,23 @@ td.num, th.num { font-variant-numeric: lining-nums tabular-nums; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface-sub); }
 td.num, th.num { text-align: right; }
+
+/* Laptop widths: the sheet stops competing with its own chrome.
+   ------------------------------------------------------------------
+   At 1024 the rail took 232px and eight columns of 14px padding took
+   another 224, which left the calls table 123px short - and the column it
+   dropped was the summary, the only prose on the table and the one thing
+   anyone reads as a sentence. Every fixed column held its full width while
+   the content absorbed the whole squeeze.
+
+   Nothing is hidden here and no font changes. The rail gives back 40px, the
+   cells give back 10px each, and the summary column - which now asks for
+   whatever is left rather than competing for it - takes the difference. */
+@media (max-width: 1200px) {
+  .shell { grid-template-columns: 192px minmax(0, 1fr); }
+  .rail { padding-left: 16px; padding-right: 16px; }
+  .panel td, .panel th { padding-left: 9px; padding-right: 9px; }
+}
 
 /* Drawer & Modals */
 .drawer-scrim {
@@ -526,7 +564,7 @@ td.num, th.num { text-align: right; }
 }
 .drawer-tabs button {
   border-radius: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-small);
   padding: 6px 2px;
   background: transparent;
   border: none;
@@ -561,7 +599,7 @@ td.num, th.num { text-align: right; }
 }
 .field > span {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 500;
   color: var(--ink-2);
   margin-bottom: 5px;
@@ -599,7 +637,7 @@ td.num, th.num { text-align: right; }
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   padding: 10px 16px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 500;
   box-shadow: var(--shadow-lg);
   display: flex;
@@ -808,6 +846,40 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 /* Recharts redraws its own bars; this is only for the surface behind them. */
 .panel .recharts-surface { transition: opacity var(--t-fast) var(--ease-out); }
 
+/* Panels leave the way they arrive.
+   ------------------------------------------------------------------
+   The drawer slid in over 320ms and then ceased; the three modals popped in
+   and then ceased. Each is mounted permanently by App and guards itself with
+   `if (!isOpen) return null`, so the markup vanished the instant the flag
+   flipped and there was nothing left to animate - see useClosing, which holds
+   the panel for one animation and flags it.
+
+   `forwards` on all of them: without it a panel snaps back to full opacity
+   for the frame between the animation ending and React unmounting it. */
+@keyframes fadeOut  { from { opacity: 1; }               to { opacity: 0; } }
+@keyframes slideOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
+
+.drawer-scrim.is-leaving {
+  animation: fadeOut var(--t-slow) var(--ease-out) forwards;
+  pointer-events: none;      /* a closing scrim must not swallow the next click */
+}
+/* The two inline-styled panels take their entrance from a class rather than a
+   style attribute, because an inline `animation` outranks any rule here and
+   the exit below could never take hold against it. */
+.xp-panel { animation: popIn var(--t-slow) var(--ease-out); }
+
+/* Every modal here is a direct child of its scrim, so one rule covers all
+   three. */
+.drawer-scrim.is-leaving > * {
+  animation: popOut var(--t-slow) var(--ease-out) forwards;
+}
+/* The drawer is a sibling of its scrim rather than a child, and it leaves by
+   the side it came in from rather than shrinking in place. */
+.drawer.is-leaving {
+  animation: slideOut var(--t-slow) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -914,7 +986,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .hero-band > *:not([aria-hidden]) { position: relative; z-index: 1; }
 
 .hero-label {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -964,7 +1036,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .hero-stat:first-child { border-left: none; padding-left: 0; }
 .hero-stat:last-child { padding-right: 0; }
 .hero-stat-label {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1006,7 +1078,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .hero-scale {
   display: flex;
   justify-content: space-between;
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   letter-spacing: 0.06em;
   color: var(--ink-muted);
   margin-top: 9px;
@@ -1047,7 +1119,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   border: 1px solid var(--ink);
   color: var(--ink);
   font-family: var(--font-main);
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   font-weight: 700;
   letter-spacing: 0.04em;
   border-radius: 0;
@@ -1062,18 +1134,18 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   line-height: 1.12;
   color: var(--ink);
 }
-.rail-place { font-size: 11px; color: var(--ink-muted); margin-top: 4px; }
+.rail-place { font-size: var(--fs-small); color: var(--ink-muted); margin-top: 4px; }
 
 .rail-block { display: flex; flex-direction: column; gap: 7px; }
 .rail-legend {
-  font-size: 9.5px;
+  font-size: var(--fs-micro);
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--ink-muted);
   margin-bottom: 2px;
 }
 .rail-period { width: 100%; }
-.rail-span { font-size: 11px; color: var(--ink-muted); }
+.rail-span { font-size: var(--fs-small); color: var(--ink-muted); }
 .rail-live { align-self: flex-start; }
 
 /* Nav items are flush left with a seam that fills in on the current act, so
@@ -1082,7 +1154,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .rail-nav a {
   position: relative;
   padding: 7px 0 7px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
   text-decoration: none;
   border-left: 2px solid transparent;
@@ -1097,7 +1169,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   justify-content: flex-start;
   gap: 9px;
   padding: 7px 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-small);
   background: transparent;
   border-color: transparent;
   color: var(--ink-2);
@@ -1105,7 +1177,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .rail-btn:hover { background: var(--surface); border-color: var(--grid); color: var(--ink); }
 .rail-btn-accent { color: var(--shu-ink); }
 .rail-btn-accent:hover { border-color: var(--shu); color: var(--shu-ink); }
-.rail-quiet { color: var(--ink-muted); font-size: 12px; }
+.rail-quiet { color: var(--ink-muted); font-size: var(--fs-small); }
 .rail-btn:disabled { opacity: 0.5; }
 
 /* The Record group folds away. Six buttons was the longest thing in the rail
@@ -1261,14 +1333,14 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   background: var(--s1-light);
   border-radius: var(--radius-sm);
 }
-.xp-head h2 { font-size: 16px; margin: 0; }
-.xp-head p { margin: 3px 0 0; font-size: 12px; color: var(--ink-muted); }
+.xp-head h2 { font-size: var(--fs-head); margin: 0; }
+.xp-head p { margin: 3px 0 0; font-size: var(--fs-small); color: var(--ink-muted); }
 .xp-ver {
   display: inline-block;
   margin-left: 8px;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.06em;
   background: var(--s1-light);
@@ -1307,7 +1379,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   right: 12px;
   padding: 2px 9px;
   border-radius: 999px;
-  font-size: 9.5px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1320,20 +1392,20 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   font-weight: 700;
 }
 .xp-opt-a .xp-opt-title { color: var(--s1); }
 .xp-opt-b .xp-opt-title { color: var(--s3); }
 .xp-opt-sub {
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
   line-height: 1.55;
   margin-top: -6px;
 }
 
 .xp-legend {
-  font-size: 9.5px;
+  font-size: var(--fs-micro);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--ink-muted);
@@ -1345,7 +1417,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .xp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .xp-chip {
   padding: 5px 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   font-weight: 500;
   gap: 6px;
   background: var(--surface);
@@ -1375,7 +1447,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   align-items: center;
   text-align: center;
 }
-.xp-well-note { font-size: 11px; color: var(--ink-muted); }
+.xp-well-note { font-size: var(--fs-small); color: var(--ink-muted); }
 
 .xp-fmts { display: flex; gap: 8px; width: 100%; }
 .xp-fmt {
@@ -1393,8 +1465,8 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   background: var(--s1-light);
   box-shadow: inset 0 0 0 1px var(--s1);
 }
-.xp-fmt b { font-size: 12px; }
-.xp-fmt span { font-size: 10px; color: var(--ink-muted); }
+.xp-fmt b { font-size: var(--fs-small); }
+.xp-fmt span { font-size: var(--fs-micro); color: var(--ink-muted); }
 .xp-fmt.is-on b { color: var(--s1); }
 
 /* A checkbox row reads as one target, so the whole line is the label. */
@@ -1402,7 +1474,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--ink-2);
   cursor: pointer;
   padding: 3px 0;
@@ -1410,14 +1482,14 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 }
 .xp-check input { width: 14px; height: 14px; margin: 1px 0 0; padding: 0; flex: none; accent-color: var(--s3); }
 .xp-check:hover { color: var(--ink); }
-.xp-check .xp-count { color: var(--ink-muted); font-size: 11px; }
+.xp-check .xp-count { color: var(--ink-muted); font-size: var(--fs-small); }
 .xp-opt-a .xp-check input { accent-color: var(--s1); }
 
 .xp-rows { display: flex; flex-direction: column; gap: 1px; }
 
-.xp-field { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }
+.xp-field { display: flex; align-items: center; gap: 10px; font-size: var(--fs-small); }
 .xp-field > span { color: var(--ink-2); flex: none; }
-.xp-field select { flex: 1; min-width: 0; font-size: 12px; padding: 5px 8px; }
+.xp-field select { flex: 1; min-width: 0; font-size: var(--fs-small); padding: 5px 8px; }
 
 /* What the selection will actually produce, counted rather than promised. */
 .xp-verdict {
@@ -1428,7 +1500,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   background: var(--s3-light);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   line-height: 1.5;
   color: var(--good-text);
 }
@@ -1452,7 +1524,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
 }
 .xp-foot-actions { display: flex; gap: 9px; margin-left: auto; }
@@ -1464,7 +1536,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   grid-column: 1 / -1;
   border-radius: var(--radius-sm);
   padding: 10px 13px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1532,19 +1604,19 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   color: var(--ink);
 }
 .colophon-place {
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
   margin-top: 5px;
 }
 
 .colophon-meta { text-align: right; }
 .colophon-period {
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 .colophon-source {
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
   margin-top: 5px;
 }
@@ -1571,7 +1643,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   font-variant-numeric: tabular-nums;
 }
 .colophon-label {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   letter-spacing: 0.15em;
   text-transform: uppercase;
@@ -1581,7 +1653,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 }
 
 .colophon-note {
-  font-size: 11.5px;
+  font-size: var(--fs-small);
   color: var(--ink-muted);
   margin-top: 22px;
   max-width: 58ch;

@@ -33,11 +33,13 @@ function mmss(seconds) {
 
 function when(iso) {
   const d = new Date(iso);
-  if (Number.isNaN(+d)) return '—';
-  return d.toLocaleString('en-IN', {
-    day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
-    hour12: true,
-  });
+  if (Number.isNaN(+d)) return null;
+  return {
+    date: d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+    time: d.toLocaleTimeString('en-IN', {
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    }),
+  };
 }
 
 /* A phone call and a call from the website are different things to a manager -
@@ -75,12 +77,12 @@ function Transcript({ callId }) {
   }, [callId]);
 
   if (state.loading) {
-    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Reading the transcript…</div>;
+    return <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>Reading the transcript…</div>;
   }
   if (state.error) {
     return (
       <div style={{ display: 'flex', gap: 7, alignItems: 'flex-start',
-                    fontSize: 12, color: 'var(--critical)' }}>
+                    fontSize: 'var(--fs-small)', color: 'var(--critical)' }}>
         <AlertTriangle size={13} style={{ flex: 'none', marginTop: 1 }} />
         <span>{state.error}</span>
       </div>
@@ -89,18 +91,18 @@ function Transcript({ callId }) {
 
   const { turns = [], tools = [], truncated } = state.data || {};
   if (!turns.length) {
-    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Nothing was said on this call.</div>;
+    return <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>Nothing was said on this call.</div>;
   }
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10,
                     marginBottom: 9, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, textTransform: 'uppercase',
+        <span style={{ fontSize: 'var(--fs-small)', textTransform: 'uppercase',
                        letterSpacing: '0.07em', color: 'var(--ink-muted)' }}>
           Transcript
         </span>
-        <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           {n0(turns.length)} turns
           {tools.length > 0 && <> · agent looked something up {n0(tools.length)}×</>}
         </span>
@@ -118,7 +120,7 @@ function Transcript({ callId }) {
           return (
             <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
               <span style={{
-                flex: 'none', width: 62, fontSize: 10.5, lineHeight: 1.6,
+                flex: 'none', width: 62, fontSize: 'var(--fs-micro)', lineHeight: 1.6,
                 textTransform: 'uppercase', letterSpacing: '0.06em',
                 color: mine ? 'var(--viz-1)' : 'var(--ink-muted)',
                 fontWeight: mine ? 600 : 400,
@@ -128,7 +130,7 @@ function Transcript({ callId }) {
               {/* No white-space:pre - the text arrives as prose, and these are
                   Devanagari and Gurmukhi as often as Latin, so it has to wrap
                   normally rather than be held to a monospace column. */}
-              <span style={{ fontSize: 12.5, lineHeight: 1.65,
+              <span style={{ fontSize: 'var(--fs-small)', lineHeight: 1.65,
                              color: mine ? 'var(--ink-2)' : 'var(--ink)' }}>
                 {t.text}
               </span>
@@ -138,7 +140,7 @@ function Transcript({ callId }) {
       </div>
 
       {truncated && (
-        <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8 }}>
+        <div style={{ fontSize: 'var(--fs-small)', color: 'var(--warning)', marginTop: 8 }}>
           This transcript was longer than we fetched, so the end is missing.
         </div>
       )}
@@ -167,7 +169,7 @@ function Pill({ text, fg, bg, title }) {
   return (
     <span title={title} style={{
       display: 'inline-block', padding: '2px 9px', borderRadius: 2,
-      fontSize: 11, lineHeight: 1.6, whiteSpace: 'nowrap',
+      fontSize: 'var(--fs-small)', lineHeight: 1.6, whiteSpace: 'nowrap',
       color: fg, background: bg, border: `1px solid ${fg}`,
     }}>
       {text}
@@ -201,12 +203,12 @@ function Recordings({ callId }) {
   }, [callId]);
 
   if (state.loading) {
-    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>Fetching the recording…</div>;
+    return <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>Fetching the recording…</div>;
   }
   if (state.error) {
     return (
       <div style={{ display: 'flex', gap: 7, alignItems: 'flex-start',
-                    fontSize: 12, color: 'var(--critical)' }}>
+                    fontSize: 'var(--fs-small)', color: 'var(--critical)' }}>
         <AlertTriangle size={13} style={{ flex: 'none', marginTop: 1 }} />
         <span>{state.error}</span>
       </div>
@@ -217,7 +219,7 @@ function Recordings({ callId }) {
     (a, b) => LEG_ORDER.indexOf(a.leg) - LEG_ORDER.indexOf(b.leg));
 
   if (!recs.length) {
-    return <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>No recording was kept for this call.</div>;
+    return <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>No recording was kept for this call.</div>;
   }
 
   return (
@@ -225,7 +227,7 @@ function Recordings({ callId }) {
       {recs.map(r => (
         <div key={r.leg} style={{ display: 'flex', alignItems: 'center', gap: 12,
                                   flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, textTransform: 'uppercase',
+          <span style={{ fontSize: 'var(--fs-small)', textTransform: 'uppercase',
                          letterSpacing: '0.07em', color: 'var(--ink-muted)',
                          minWidth: 66 }}>
             {LEG_LABEL[r.leg] || r.leg}
@@ -237,7 +239,7 @@ function Recordings({ callId }) {
         </div>
       ))}
       {state.data?.expires_in_seconds != null && (
-        <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+        <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           These links are issued for {Math.round(state.data.expires_in_seconds / 60)} minutes.
           Reopen the call if playback stops working.
         </div>
@@ -275,21 +277,21 @@ export default function AgentCalls() {
       <div className="panel">
         <div className="panel-header" style={{ marginBottom: 14 }}>
           <h2>Calls the agent handled</h2>
-          <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{note}</span>
+          <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>{note}</span>
         </div>
 
         {error ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
-                        fontSize: 13, color: 'var(--critical)', padding: '10px 0' }}>
+                        fontSize: 'var(--fs-body)', color: 'var(--critical)', padding: '10px 0' }}>
             <AlertTriangle size={14} style={{ flex: 'none', marginTop: 2 }} />
             <span>{error}</span>
           </div>
         ) : !data ? (
-          <div style={{ fontSize: 13, color: 'var(--ink-muted)', padding: '10px 0' }}>
+          <div style={{ fontSize: 'var(--fs-body)', color: 'var(--ink-muted)', padding: '10px 0' }}>
             Reading the call log…
           </div>
         ) : !calls.length ? (
-          <div style={{ fontSize: 13, color: 'var(--ink-muted)', padding: '10px 0' }}>
+          <div style={{ fontSize: 'var(--fs-body)', color: 'var(--ink-muted)', padding: '10px 0' }}>
             The agent has not taken any calls yet.
           </div>
         ) : (
@@ -327,11 +329,22 @@ export default function AgentCalls() {
                                   transform: isOpen ? 'rotate(180deg)' : 'none',
                                   transition: 'transform var(--t-fast) var(--ease-out)' }} />}
                           </td>
-                          <td>{when(c.started_at)}</td>
+                          <td>{(() => {
+                            const w = when(c.started_at);
+                            if (!w) return '—';
+                            return (
+                              <>
+                                <div>{w.date}</div>
+                                <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
+                                  {w.time}
+                                </div>
+                              </>
+                            );
+                          })()}</td>
                           <td style={{ whiteSpace: 'normal' }}>
                             <div>{c.name || 'Unknown caller'}</div>
                             {c.phone && (
-                              <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+                              <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
                                 {c.phone}
                               </div>
                             )}
@@ -342,14 +355,16 @@ export default function AgentCalls() {
                           <td><Sentiment value={c.sentiment} score={c.sentiment_score} /></td>
                           {/* The summary is the column people read, so it gets
                               the room the fixed columns do not need. */}
-                          <td style={{ whiteSpace: 'normal', maxWidth: 460,
+                          <td style={{ whiteSpace: 'normal', width: '100%',
                                        color: 'var(--ink-2)' }}>
+                            <div style={{ maxWidth: 520 }}>
                             {c.summary
                               ? (isOpen ? c.summary
                                         : c.summary.length > 120
                                           ? c.summary.slice(0, 120) + '…'
                                           : c.summary)
                               : <span style={{ color: 'var(--ink-muted)' }}>No summary</span>}
+                            </div>
                           </td>
                         </tr>
                         {isOpen && (
@@ -368,7 +383,7 @@ export default function AgentCalls() {
                                                 borderTop: '1px solid var(--grid)' }}>
                                     {c.has_recording
                                       ? <Recordings callId={c.id} />
-                                      : <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                                      : <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
                                           This call was not recorded.
                                         </span>}
                                   </div>
@@ -388,7 +403,7 @@ export default function AgentCalls() {
               <button
                 className="rail-quiet"
                 onClick={() => setShowAll(s => !s)}
-                style={{ marginTop: 12, padding: '5px 12px', fontSize: 12 }}
+                style={{ marginTop: 12, padding: '5px 12px', fontSize: 'var(--fs-small)' }}
               >
                 {showAll ? 'Show recent only' : `Show all ${n0(calls.length)} calls`}
               </button>

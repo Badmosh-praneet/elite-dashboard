@@ -97,7 +97,7 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
                 borderBottom: '1px solid var(--grid)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--fs-lead)' }}>
+                  <span style={{ fontSize: 'var(--fs-lead)', fontWeight: 600 }}>
                     {p.label}
                   </span>
                   {p.is_active && (

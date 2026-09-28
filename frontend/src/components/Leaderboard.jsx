@@ -24,8 +24,10 @@ export default function Leaderboard({ board = [] }) {
     <span
       title={`Rank ${idx + 1}`}
       style={{
-        fontFamily: 'var(--font-display)',
         fontSize: idx < 3 ? '19px' : '14px',
+        fontWeight: idx < 3 ? 600 : 500,
+        letterSpacing: '-0.015em',
+        fontVariantNumeric: 'lining-nums tabular-nums',
         lineHeight: 1,
         color: idx < 3 ? 'var(--ink)' : 'var(--ink-muted)',
       }}

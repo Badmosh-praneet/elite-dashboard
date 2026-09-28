@@ -145,7 +145,7 @@ export default function StockAndModels({ models = [], ageing = [], activity = []
                   </span>
                 </div>
                 <div style={{
-                  fontFamily: 'var(--font-display)', fontSize: '22px',
+                  fontSize: '22px', fontWeight: 600, letterSpacing: '-0.018em',
                   lineHeight: 1, color: 'var(--ink)',
                   fontVariantNumeric: 'lining-nums tabular-nums',
                 }}>

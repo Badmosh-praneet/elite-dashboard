@@ -46,7 +46,6 @@ export default function Header({
             height: '40px',
             border: '1.5px solid var(--shu)',
             color: 'var(--shu-ink)',
-            fontFamily: 'var(--font-display)',
             fontWeight: '600',
             fontSize: 'var(--fs-body)',
             letterSpacing: '0.04em',

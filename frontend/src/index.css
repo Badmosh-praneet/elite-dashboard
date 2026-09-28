@@ -6,13 +6,29 @@
 :root {
   color-scheme: dark;
 
-  /* One grotesque, doing everything. The previous sheet was set in a Japanese
-     handwriting face falling back to Comic Sans, which is where the whole
-     "cartoonish" reading came from. Figures are tabular everywhere, so a
-     column of numbers aligns and a changing digit never nudges its neighbour. */
-  --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
-  --font-main: 'Instrument Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* One family, doing everything.
+     ------------------------------------------------------------------
+     There used to be three. A display serif set the masthead and the page
+     titles, but Instrument Serif ships a single weight and is drawn for
+     headlines - at the 19px and 22px it was actually used at, its thin
+     strokes went spindly and frayed, worst of all on Windows, where there
+     is no stem darkening to rescue them. It also sat directly beside the VW
+     roundel, and Volkswagen's own hand is an emphatically geometric sans, so
+     a literary serif read as a magazine masthead rather than a dealership's
+     instrument. A third family, JetBrains Mono, was downloaded on every
+     visit and referenced nowhere.
+
+     Inter replaces all three. It is drawn for interfaces at small sizes,
+     which is where this sheet lives - twelve and thirteen and a half pixels
+     carry almost every word on it - with a tall x-height and apertures open
+     enough that 1, l and I stay distinct in a table of registration
+     numbers. Hierarchy now comes from weight and size rather than from
+     changing voice, which is the more honest instrument anyway.
+
+     Figures are tabular everywhere, so a column of numbers aligns and a
+     changing digit never nudges its neighbour. That is not decoration: nine
+     rules depend on it, and the headline figures animate between values. */
+  --font-main: 'Inter', system-ui, -apple-system, sans-serif;
 
   /* Night sheet. Near-black with a trace of blue in it, never pure #000:
      a true black ground makes white figures vibrate at this size. */
@@ -172,14 +188,15 @@ body {
    looked friendly rather than authoritative. */
 h1, h2, h3, h4 { margin: 0; color: var(--ink); }
 h1 {
-  font-family: var(--font-display);
+  font-family: var(--font-main);
   font-size: 32px;
-  font-weight: 400;          /* Instrument Serif ships one weight; 700 fakes it */
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  letter-spacing: -0.022em;   /* Inter wants negative tracking above ~20px */
   line-height: 1.05;
 }
-/* Panel titles stay in the SANS. The serif earns its authority by scarcity -
-   put it on fourteen panel headings and it is just another body face. */
+/* Panel titles sit a step below in weight, not in typeface. With one family
+   the distance between a page title and a panel title has to be carried by
+   size and weight, which is a finer instrument than a change of voice. */
 h2 {
   font-family: var(--font-main);
   font-size: var(--fs-lead);
@@ -422,7 +439,7 @@ button.primary:hover {
   font-family: var(--font-main);
   font-size: 36px;
   font-weight: 500;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.022em;
   color: var(--ink);
   line-height: 1.05;
   font-variant-numeric: lining-nums tabular-nums;
@@ -1014,7 +1031,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   font-size: clamp(64px, 8vw, 100px);
   font-weight: 600;
   line-height: 0.86;
-  letter-spacing: -0.055em;      /* tight enough to read as one mark */
+  letter-spacing: -0.032em;      /* tight enough to read as one mark */
   font-variant-numeric: lining-nums tabular-nums;
 }
 .hero-of {
@@ -1022,7 +1039,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   font-size: clamp(20px, 2.2vw, 27px);
   font-weight: 400;
   color: var(--ink-muted);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   font-variant-numeric: lining-nums tabular-nums;
 }
 
@@ -1047,7 +1064,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .hero-stat-value {
   font-size: clamp(22px, 2.3vw, 30px);
   font-weight: 500;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.022em;
   line-height: 1;
   white-space: nowrap;
   /* Required now that these figures count rather than jump: proportional
@@ -1128,9 +1145,9 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
    the old "VW" initials would just clash with it. */
 .rail-seal-logo { border: none; }
 .rail-name {
-  font-family: var(--font-display);
   font-size: 19px;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  letter-spacing: -0.018em;
   line-height: 1.12;
   color: var(--ink);
 }
@@ -1593,13 +1610,12 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   margin-bottom: 26px;
 }
 
-/* The one other place the display serif appears, matching the rail masthead:
-   a report signs off in the same hand it opened in. */
+/* The sign-off matches the rail masthead: a report closes in the same hand
+   it opened in. */
 .colophon-name {
-  font-family: var(--font-display);
   font-size: 22px;
-  font-weight: 400;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  letter-spacing: -0.018em;
   line-height: 1.1;
   color: var(--ink);
 }
@@ -1637,7 +1653,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .colophon-n {
   font-size: 19px;
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.018em;
   line-height: 1.1;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;

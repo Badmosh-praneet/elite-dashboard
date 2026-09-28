@@ -15,6 +15,7 @@
 
 import React from 'react';
 import { n0, pct, money } from '../api/client';
+import HeroField from './HeroField';
 
 export default function HeroMetric({ kpi = {} }) {
   const bookings = Number(kpi.bookings || 0);
@@ -43,6 +44,7 @@ export default function HeroMetric({ kpi = {} }) {
 
   return (
     <div className="hero-band">
+      <HeroField />
       <div className="hero-label">Bookings this month</div>
 
       <div className="hero-row">

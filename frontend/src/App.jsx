@@ -385,7 +385,14 @@ function Dashboard() {
  */
 export default function App() {
   return (
-    <BrowserRouter>
+    // The dev server mounts the app under Vite's base, /static/, so a path
+    // there is /static/sales while in production it is /sales - the app is
+    // served from the root and only its assets come from /static. Without a
+    // basename no route ever matched in dev and the rail looked broken while
+    // production was fine, which is the worst way round to have a bug.
+    // import.meta.env.BASE_URL is '/static/' in both, so it cannot be used
+    // directly; DEV is the thing that actually differs.
+    <BrowserRouter basename={import.meta.env.DEV ? '/static' : '/'}>
       <Dashboard />
     </BrowserRouter>
   );

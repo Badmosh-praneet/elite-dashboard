@@ -658,6 +658,100 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 [data-theme="light"] tr:hover td { background: rgba(22, 34, 58, 0.035); }
 
 /* Nothing moves that was not asked to move. */
+/* ---------------------------------------------------------------------
+   Motion.
+
+   The sheet is hairlines and figures with no boxes, no radii and no shadows,
+   so motion has to work the same way: a rule brightening, a figure settling a
+   pixel. Anything that lifts, scales or casts a shadow would invent a card
+   where the design deliberately has none, which is the "cartoonish" the
+   redesign was undoing.
+
+   Everything here is a hairline or a 1px shift, on one easing curve, and all
+   of it is switched off under prefers-reduced-motion at the end of the file.
+   --------------------------------------------------------------------- */
+
+:root {
+  /* Decelerating: quick to respond, slow to settle. One curve everywhere, so
+     the whole sheet moves with one hand. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 140ms;
+  --t-slow: 320ms;
+}
+
+/* A panel answers by lighting its own rule, which is the only edge it has. */
+.panel {
+  transition: border-top-color var(--t-fast) var(--ease-out);
+}
+.panel:hover { border-top-color: var(--shu); }
+
+/* Tiles: the rule warms and the figure settles up a pixel. The number is what
+   the eye is on, so it is the thing that acknowledges the pointer. */
+.kpi-tile {
+  transition: border-top-color var(--t-fast) var(--ease-out);
+}
+.kpi-tile:hover { border-top-color: var(--shu); }
+.kpi-tile .val {
+  transition: transform var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+.kpi-tile:hover .val { transform: translateY(-1px); }
+
+/* Rail: the marker slides in from the left edge rather than blinking on. The
+   pseudo-element is used so the real border stays put and nothing reflows. */
+.rail-nav a {
+  position: relative;
+  transition: color var(--t-fast) var(--ease-out);
+}
+.rail-nav a::after {
+  content: '';
+  position: absolute;
+  left: -1px; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--shu);
+  transform: scaleY(0);
+  transform-origin: 50% 50%;
+  transition: transform var(--t-slow) var(--ease-out);
+}
+.rail-nav a:hover::after { transform: scaleY(0.45); }
+.rail-nav a.is-here::after { transform: scaleY(1); }
+
+.rail-btn {
+  transition: background var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
+}
+
+/* Rows: a hairline appears at the left of the row under the pointer, so the
+   eye can find its place across a wide table without the row changing shape. */
+.table-wrap tbody tr td:first-child {
+  box-shadow: inset 2px 0 0 transparent;
+  transition: box-shadow var(--t-fast) var(--ease-out);
+}
+.table-wrap tbody tr:hover td:first-child {
+  box-shadow: inset 2px 0 0 var(--shu);
+}
+
+/* A page arrives rather than appearing. 6px and 320ms - enough to register as
+   a change of place, not enough to wait for. */
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.sheet > * { animation: pageIn var(--t-slow) var(--ease-out) both; }
+
+/* The panels behind the first screen follow it in, barely staggered. Capped
+   at six: past that the last panel is waiting on an animation nobody is
+   watching. */
+.sheet > *:nth-child(2) { animation-delay: 40ms; }
+.sheet > *:nth-child(3) { animation-delay: 80ms; }
+.sheet > *:nth-child(4) { animation-delay: 120ms; }
+.sheet > *:nth-child(5) { animation-delay: 160ms; }
+.sheet > *:nth-child(n+6) { animation-delay: 200ms; }
+
+/* Recharts redraws its own bars; this is only for the surface behind them. */
+.panel .recharts-surface { transition: opacity var(--t-fast) var(--ease-out); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -765,7 +859,11 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   border-bottom: 1px solid var(--grid);
   padding: 26px 0 30px;
   margin-bottom: 40px;
+  /* The point field is absolutely positioned inside this, so the band has to
+     be the containing block. Its own content is lifted above it. */
+  position: relative;
 }
+.hero-band > *:not([aria-hidden]) { position: relative; z-index: 1; }
 
 .hero-label {
   font-size: 10px;

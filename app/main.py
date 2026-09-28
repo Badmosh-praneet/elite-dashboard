@@ -1264,6 +1264,35 @@ def health():
         "status": "ok",
         "database": db_status,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
+        "config": _config_report(),
+    }
+
+
+def _config_report() -> dict:
+    """Which configuration the running process can actually see.
+
+    A variable set in a hosting dashboard and a variable present in the
+    process are different facts, and when they disagree there is no way to
+    tell from the outside which one is wrong - the panel says the key is
+    missing, the dashboard says it is right there, and both are telling the
+    truth about different things. This reports what the process has.
+
+    Names and booleans only, never a value. It discloses nothing that the
+    503 from /api/calls does not already state, and the service name is not
+    a secret - it is the thing you need in order to know whether the page
+    you edited belongs to the process that is answering you.
+
+    `perfox_named` catches the failure this was written for: a variable whose
+    name carries a trailing space or a typo is set, and is invisible, because
+    the dashboard renders it identically to the correct one.
+    """
+    return {
+        # Render injects these; absent means this is not a Render instance.
+        "service": os.environ.get("RENDER_SERVICE_NAME") or None,
+        "commit": (os.environ.get("RENDER_GIT_COMMIT") or "")[:7] or None,
+        "database_url": bool(os.environ.get("DATABASE_URL", "").strip()),
+        "perfox_api_key": bool(os.environ.get("PERFOX_API_KEY", "").strip()),
+        "perfox_named": sorted(k for k in os.environ if "PERFOX" in k.upper()),
     }
 
 

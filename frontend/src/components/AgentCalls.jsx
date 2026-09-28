@@ -357,17 +357,22 @@ export default function AgentCalls() {
                             <td />
                             <td colSpan={7} style={{ whiteSpace: 'normal',
                                                      padding: '4px 0 18px' }}>
-                              {/* Transcript first. It is the thing that gets
-                                  read; the audio is for when the wording
-                                  matters or the transcript looks wrong. */}
-                              <Transcript callId={c.id} />
-                              <div style={{ marginTop: 14, paddingTop: 12,
-                                            borderTop: '1px solid var(--grid)' }}>
-                                {c.has_recording
-                                  ? <Recordings callId={c.id} />
-                                  : <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
-                                      This call was not recorded.
-                                    </span>}
+                              <div className="call-detail">
+                                <div>
+                                  {/* Transcript first. It is the thing that
+                                      gets read; the audio is for when the
+                                      wording matters or the transcript looks
+                                      wrong. */}
+                                  <Transcript callId={c.id} />
+                                  <div style={{ marginTop: 14, paddingTop: 12,
+                                                borderTop: '1px solid var(--grid)' }}>
+                                    {c.has_recording
+                                      ? <Recordings callId={c.id} />
+                                      : <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                                          This call was not recorded.
+                                        </span>}
+                                  </div>
+                                </div>
                               </div>
                             </td>
                           </tr>

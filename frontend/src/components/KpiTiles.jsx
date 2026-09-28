@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { n0, money, pct } from '../api/client';
+import Figure from './Figure';
 
 /* A sparkline, not a chart: no axes, no labels, just the shape of the month.
    Drawn as a path so it scales with the tile and recolours with the theme. */
@@ -48,7 +49,12 @@ function Meter({ share, color = 'var(--viz-1)' }) {
       height: 5, background: 'var(--sunken)', borderRadius: 3,
       overflow: 'hidden', border: '0.5px solid var(--grid)',
     }}>
-      <div style={{ width: `${capped}%`, height: '100%', background: color, borderRadius: 3 }} />
+      <div style={{
+        width: `${capped}%`, height: '100%', background: color, borderRadius: 3,
+        // The hero meter has always slid to its new share; these eight did not,
+        // so the same fact was animated in one place and instant in eight.
+        transition: 'width var(--t-slow) var(--ease-out)',
+      }} />
     </div>
   );
 }
@@ -75,39 +81,40 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
   const tiles = [
     {
       label: 'Retails Delivered',
-      value: n0(retails),
+      value: retails,
       share: share(retails, retailTarget),
       foot: `${pct(share(retails, retailTarget))} of ${n0(retailTarget)} target`,
     },
     {
       label: 'Total Enquiries',
-      value: n0(enquiries),
+      value: enquiries,
       share: share(enquiries, leadsTarget),
       spark: trends.enquiries,
       foot: `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)} · ${n0(kpi.qualified)} qualified`,
     },
     {
       label: 'Test Drives',
-      value: n0(testDrives),
+      value: testDrives,
       share: share(testDrives, tdTarget),
       foot: `${pct(share(testDrives, tdTarget))} of ${n0(tdTarget)} target`,
     },
     {
       label: 'Booking Revenue',
-      value: money(kpi.booking_amount_collected),
+      value: num(kpi.booking_amount_collected),
+      format: money,
       spark: trends.bookings,
       sparkColor: 'var(--viz-2)',
       foot: `Advance against ${n0(bookings)} bookings`,
     },
     {
       label: 'Free Stock',
-      value: n0(free),
+      value: free,
       share: share(free, onFloor),
       foot: `of ${n0(onFloor)} on the floor · ${n0(allotted)} allotted`,
     },
     {
       label: 'Ageing over 90 Days',
-      value: n0(over90),
+      value: over90,
       share: share(over90, onFloor),
       color: 'var(--critical)',
       foot: `${pct(share(over90, onFloor))} of stock · carries interest`,
@@ -115,14 +122,14 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
     },
     {
       label: 'Backorders',
-      value: n0(backorders),
+      value: backorders,
       share: share(backorders, bookings),
       color: 'var(--warning)',
       foot: `${pct(share(backorders, bookings))} of bookings await a car`,
     },
     {
       label: 'Pending CRM Punch',
-      value: n0(pending),
+      value: pending,
       share: share(pending, bookings),
       color: pending > 0 ? 'var(--critical)' : 'var(--good)',
       foot: `${pct(share(pending, bookings))} of bookings not in VW systems`,
@@ -135,7 +142,7 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
       {tiles.map(t => (
         <div key={t.label} className="kpi-tile">
           <div className="label">{t.label}</div>
-          <div className="val">{t.value}</div>
+          <div className="val"><Figure value={t.value} format={t.format || n0} /></div>
           <div className="kpi-plot">
             {t.spark
               ? <Spark series={t.spark} color={t.sparkColor || 'var(--viz-1)'} />

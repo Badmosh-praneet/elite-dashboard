@@ -16,6 +16,7 @@
 import React from 'react';
 import { n0, pct, money } from '../api/client';
 import HeroField from './HeroField';
+import Figure from './Figure';
 
 export default function HeroMetric({ kpi = {} }) {
   const bookings = Number(kpi.bookings || 0);
@@ -30,15 +31,26 @@ export default function HeroMetric({ kpi = {} }) {
               : ratio >= 60 ? 'var(--s1)'
               : 'var(--serious)';
 
+  // These three all move when a booking lands, so they count with the figure
+  // rather than snapping beside a number that is visibly counting. 'Reached'
+  // is a word, not a quantity, and stays a word.
   const stats = [
-    { label: 'Achieved', value: pct(ratio), tone: 'var(--ink)' },
+    {
+      label: 'Achieved',
+      node: <Figure value={ratio} format={pct} decimals={1} />,
+      tone: 'var(--ink)',
+    },
     {
       label: shortfall > 0 ? 'To goal' : 'Status',
-      value: shortfall > 0 ? n0(shortfall) : 'Reached',
+      node: shortfall > 0 ? <Figure value={shortfall} format={n0} /> : 'Reached',
       tone: shortfall > 0 ? 'var(--serious)' : 'var(--good-text)',
     },
     ...(collected != null
-      ? [{ label: 'Advance collected', value: money(collected), tone: 'var(--ink)' }]
+      ? [{
+          label: 'Advance collected',
+          node: <Figure value={Number(collected)} format={money} />,
+          tone: 'var(--ink)',
+        }]
       : []),
   ];
 
@@ -53,7 +65,7 @@ export default function HeroMetric({ kpi = {} }) {
             column taller than the right, so the supporting figures bottom-
             aligned to a sentence instead of to the numeral they qualify. */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-          <span className="hero-figure">{n0(bookings)}</span>
+          <Figure className="hero-figure" value={bookings} format={n0} />
           <span className="hero-of">/ {n0(target)}</span>
         </div>
 
@@ -61,7 +73,7 @@ export default function HeroMetric({ kpi = {} }) {
           {stats.map(s => (
             <div key={s.label} className="hero-stat">
               <div className="hero-stat-label">{s.label}</div>
-              <div className="hero-stat-value" style={{ color: s.tone }}>{s.value}</div>
+              <div className="hero-stat-value" style={{ color: s.tone }}>{s.node}</div>
             </div>
           ))}
         </div>

@@ -228,7 +228,12 @@ button:active { transform: translateY(0.5px); }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 1.5px solid var(--shu);
   outline-offset: 2px;
+  /* Settling in from 4px rather than snapping on. Hover has had a transition
+     since the motion pass; a keyboard user was the only one still getting an
+     instant edge. */
+  transition: outline-offset var(--t-fast) var(--ease-out);
 }
+button, input, select, textarea { outline-offset: 4px; }
 
 button.primary {
   background: var(--ink);
@@ -749,6 +754,27 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .sheet > *:nth-child(5) { animation-delay: 160ms; }
 .sheet > *:nth-child(n+6) { animation-delay: 200ms; }
 
+/* An opened call unrolls. A table row cannot be animated directly - a <tr>
+   has no height to interpolate - so the detail cell holds a one-row grid and
+   the row track is what moves, from 0fr to 1fr, with the content clipped
+   behind it. Opening only: the row is not in the DOM until it is opened (the
+   transcript would otherwise fetch for all thirty-odd calls at once), so
+   there is no closed state to transition back to, and a dismissal reads
+   perfectly well as instant. */
+@keyframes rowOpen {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to   { grid-template-rows: 1fr; opacity: 1; }
+}
+.call-detail {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: rowOpen var(--t-slow) var(--ease-out);
+}
+.call-detail > * {
+  overflow: hidden;
+  min-height: 0;          /* or the grid item refuses to be clipped */
+}
+
 /* Recharts redraws its own bars; this is only for the surface behind them. */
 .panel .recharts-surface { transition: opacity var(--t-fast) var(--ease-out); }
 
@@ -838,14 +864,6 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   outline-offset: -2px;
 }
 
-/* The boot sheet in index.html breathes this ring while the bundle loads; the
-   app's own loading state uses it too, so the page does not change character
-   between the two. */
-@keyframes sumi {
-  0%, 100% { transform: scale(0.82); opacity: 0.35; }
-  50%      { transform: scale(1);    opacity: 1; }
-}
-
 /* =====================================================================
    The hero band
    =====================================================================
@@ -930,6 +948,10 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   letter-spacing: -0.035em;
   line-height: 1;
   white-space: nowrap;
+  /* Required now that these figures count rather than jump: proportional
+     digits are different widths, so 62.4% -> 63.5% would shuffle the text
+     sideways on every frame of the tween. */
+  font-variant-numeric: lining-nums tabular-nums;
 }
 
 /* A rule, not a pill: 3px, square, with a tick at the position reached. The

@@ -84,7 +84,7 @@ export default function SalesFunnel({ funnel = {} }) {
                   width: `${Math.max(1.5, pctOfMax)}%`,
                   background: 'var(--viz-1)',
                   borderRadius: '2px',
-                  transition: 'width 0.4s ease',
+                  transition: 'width var(--t-slow) var(--ease-out)',
                 }} />
                 {tgtPct != null && (
                   /* A full-height rule in seal ink with a cap above it: the old

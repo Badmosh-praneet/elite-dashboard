@@ -186,7 +186,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               textAlign: 'center',
               background: dragOver ? 'var(--s1-light)' : 'var(--surface-sub)',
               cursor: 'pointer',
-              transition: 'all 0.15s ease',
+              transition: 'border-color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out)',
             }}
           >
             <BadgeIcon size={36} style={{ color: file ? 'var(--s1)' : 'var(--ink-muted)', marginBottom: '8px' }} />

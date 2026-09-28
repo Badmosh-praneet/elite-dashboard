@@ -322,10 +322,10 @@ export default function AgentCalls() {
                             {c.has_recording
                               ? <Play size={12} style={{
                                   transform: isOpen ? 'rotate(90deg)' : 'none',
-                                  transition: 'transform 140ms ease' }} />
+                                  transition: 'transform var(--t-fast) var(--ease-out)' }} />
                               : <ChevronDown size={12} style={{
                                   transform: isOpen ? 'rotate(180deg)' : 'none',
-                                  transition: 'transform 140ms ease' }} />}
+                                  transition: 'transform var(--t-fast) var(--ease-out)' }} />}
                           </td>
                           <td>{when(c.started_at)}</td>
                           <td style={{ whiteSpace: 'normal' }}>

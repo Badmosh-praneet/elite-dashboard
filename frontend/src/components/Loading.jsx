@@ -75,7 +75,7 @@ export default function Loading({ done = 0, total = 16 }) {
           }}>
             <span style={{
               position: 'absolute', inset: '0 auto 0 0', width: `${pct}%`,
-              background: 'var(--shu)', transition: 'width 0.45s ease',
+              background: 'var(--shu)', transition: 'width var(--t-slow) var(--ease-out)',
             }} />
           </span>
         </div>

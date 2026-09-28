@@ -212,7 +212,9 @@ button, select, input, textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 12px;
-  transition: all 0.15s ease;
+  transition: border-color var(--t-fast) var(--ease-out),
+              background var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out);
 }
 
 button {
@@ -484,7 +486,7 @@ td.num, th.num { text-align: right; }
   background: rgba(33, 26, 16, 0.38);
   backdrop-filter: blur(1.5px);
   z-index: 100;
-  animation: fadeIn 0.18s ease;
+  animation: fadeIn var(--t-slow) var(--ease-out);
 }
 .drawer {
   position: fixed;
@@ -498,7 +500,7 @@ td.num, th.num { text-align: right; }
   z-index: 101;
   display: flex;
   flex-direction: column;
-  animation: slideLeft 0.22s ease-out;
+  animation: slideLeft var(--t-slow) var(--ease-out);
 }
 @keyframes slideLeft {
   from { transform: translateX(100%); }
@@ -603,7 +605,16 @@ td.num, th.num { text-align: right; }
   display: flex;
   align-items: center;
   gap: 10px;
-  animation: popIn 0.16s ease;
+  animation: popIn var(--t-slow) var(--ease-out);
+}
+/* Leaving, not left. A toast fires on every refresh, upload and save, so it
+   is the most-seen transient here and it was the only one whose exit was a
+   hard cut - it popped in over a sixth of a second and then simply ceased.
+   `forwards` matters: without it the toast would snap back to full opacity
+   for the instant between the animation ending and React unmounting it. */
+.toast.leaving {
+  animation: popOut var(--t-slow) var(--ease-out) forwards;
+  pointer-events: none;
 }
 .toast.bad { border-color: var(--critical); }
 .toast-dot {
@@ -616,6 +627,10 @@ td.num, th.num { text-align: right; }
 @keyframes popIn {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+@keyframes popOut {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.97); opacity: 0; }
 }
 
 
@@ -678,7 +693,22 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 
 :root {
   /* Decelerating: quick to respond, slow to settle. One curve everywhere, so
-     the whole sheet moves with one hand. */
+     the whole sheet moves with one hand.
+
+     Two speeds, and only two. --t-fast is feedback under the pointer: hover,
+     focus, a colour answering. --t-slow is something arriving or leaving:
+     a panel, a drawer, a toast, any bar travelling to a new value.
+
+     There is no third. The sheet once carried nine durations - 0.15s, 0.16s,
+     0.18s, 0.2s, 0.22s, 120ms, 160ms, 170ms, 0.6s - clustered so tightly that
+     no one could see the difference between any two of them, which meant
+     nothing on the page was deliberately timed. If a new value seems needed,
+     the answer is almost always one of these two.
+
+     Three animations are exempt, and should stay exempt: pulseDot, soak and
+     spin. They are continuous loops rather than transitions between states -
+     their duration sets a rhythm, not a response time, and a 140ms heartbeat
+     would be a strobe. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --t-fast: 140ms;
   --t-slow: 320ms;
@@ -963,7 +993,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 }
 .hero-meter-fill {
   height: 3px;
-  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width var(--t-slow) var(--ease-out);
 }
 .hero-meter-tick {
   position: absolute;
@@ -971,7 +1001,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   width: 1px;
   height: 15px;
   background: var(--ink);
-  transition: left 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: left var(--t-slow) var(--ease-out);
 }
 .hero-scale {
   display: flex;
@@ -1056,7 +1086,8 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   color: var(--ink-muted);
   text-decoration: none;
   border-left: 2px solid transparent;
-  transition: color 0.18s ease, border-color 0.18s ease;
+  transition: color var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out);
 }
 .rail-nav a:hover { color: var(--ink-2); border-left-color: var(--axis); }
 .rail-nav a.is-here { color: var(--ink); border-left-color: var(--shu); }
@@ -1094,8 +1125,8 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 }
 .rail-disclosure:hover { color: var(--ink-2); }
 .rail-disclosure:hover .rail-legend { color: var(--ink-2); }
-.rail-disclosure .rail-legend { transition: color 120ms ease; }
-.rail-chevron { flex: none; transition: transform 160ms ease; }
+.rail-disclosure .rail-legend { transition: color var(--t-fast) var(--ease-out); }
+.rail-chevron { flex: none; transition: transform var(--t-slow) var(--ease-out); }
 .rail-chevron.is-open { transform: rotate(180deg); }
 
 /* 0fr to 1fr animates where height:auto cannot. The inner element carries the
@@ -1104,7 +1135,8 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 .rail-drawer {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 170ms ease, opacity 170ms ease;
+  transition: grid-template-rows var(--t-slow) var(--ease-out),
+              opacity var(--t-slow) var(--ease-out);
   opacity: 0;
 }
 .rail-drawer.is-open { grid-template-rows: 1fr; opacity: 1; }
@@ -1207,7 +1239,7 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: popIn 0.2s ease;
+  animation: popIn var(--t-slow) var(--ease-out);
 }
 
 .xp-head {

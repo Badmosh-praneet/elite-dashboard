@@ -11,9 +11,17 @@
  * ten days before it was lined up, which is the workbook holding those two
  * dates the wrong way round - averaging it in turned a real 0.2 days into
  * -0.1, paperwork arriving before it exists.
+ *
+ * Shown was not the same as findable. The warning said the offending files
+ * were listed below while the table stayed in date order and cut off at ten,
+ * which put September's one impossible file at row seventeen of thirty-five,
+ * behind a "show all" button - the banner pointed somewhere the table did not
+ * go. Flagged files now sort to the top, and the two dates that disagree are
+ * marked rather than only the days between them, because those two cells are
+ * what somebody has to go and correct in the workbook.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { api, n0 } from '../api/client';
 
@@ -47,7 +55,15 @@ export default function FolderTat() {
   }, []);
 
   const rows = data?.rows || [];
-  const shown = showAll ? rows : rows.slice(0, 10);
+
+  const isBroken = r => r.days != null && r.days < 0;
+  /* Flagged first, everything else left in the date order the API sent. */
+  const ordered = useMemo(() => (
+    rows.some(isBroken)
+      ? [...rows.filter(isBroken), ...rows.filter(r => !isBroken(r))]
+      : rows
+  ), [rows]);
+  const shown = showAll ? ordered : ordered.slice(0, 10);
 
   return (
     <div className="panel">
@@ -92,8 +108,9 @@ export default function FolderTat() {
               <span>
                 {n0(data.impossible)} file{data.impossible === 1 ? '' : 's'} reached
                 accounts <b>before</b> being lined up, so the workbook holds those
-                two dates the wrong way round. They are listed below but left out
-                of the average.
+                two dates the wrong way round.{' '}
+                {data.impossible === 1 ? 'It is' : 'They are'} listed first, with
+                the disagreeing dates marked, and left out of the average.
               </span>
             </div>
           )}
@@ -111,13 +128,18 @@ export default function FolderTat() {
               </thead>
               <tbody>
                 {shown.map(r => {
-                  const bad = r.days != null && r.days < 0;
+                  const bad = isBroken(r);
+                  /* The days figure is the symptom; these two cells are the
+                     fault, and the pair of them is what gets corrected. */
+                  const wrong = bad
+                    ? { color: 'var(--critical)', fontWeight: 600 }
+                    : undefined;
                   return (
                     <tr key={r.id}>
                       <td style={{ whiteSpace: 'normal' }}>{r.customer || '—'}</td>
                       <td>{r.consultant || '—'}</td>
-                      <td>{r.lined_up || '—'}</td>
-                      <td>{r.to_accounts || '—'}</td>
+                      <td style={wrong}>{r.lined_up || '—'}</td>
+                      <td style={wrong}>{r.to_accounts || '—'}</td>
                       <td className="num"
                           style={{ color: bad ? 'var(--critical)' : undefined,
                                    fontWeight: bad ? 600 : undefined }}>

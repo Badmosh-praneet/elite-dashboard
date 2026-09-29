@@ -622,69 +622,113 @@ FROM v_daily_kpi k;
 -- The workbook is maintained by hand and its tabs are refreshed at different
 -- times, so they disagree with each other. Rather than quietly picking a winner,
 -- every disagreement found during the load is surfaced here.
+--
+-- The text is read by a manager, not a developer, so it says "the dashboard"
+-- rather than "views" and "the lower block" rather than BLOCK_2, and it names
+-- the active month instead of writing one in. `unit` says what affected_rows
+-- counts, so the panel can say "31 test drives" instead of "31 rows".
+--
+-- public.v_data_quality is a wrapper over this view for the Supabase API, and
+-- selects its columns by name - so a column appended here does not reach it
+-- until it is added there too, and cannot break it.
 -- ---------------------------------------------------------------------
 
 CREATE OR REPLACE VIEW v_data_quality AS
-WITH checks AS (
-    SELECT 'Test drive tab is stale'::text AS issue,
-           'The TD tab holds a November 2024 export, not August 2026 activity. '
-           || 'Funnel views take test drives from the scorecard instead.'::text AS detail,
+WITH active AS (
+    -- The month the dashboard is reporting on. Every sentence below that names
+    -- a month takes it from here; they used to say "August" outright, and would
+    -- have gone on saying it in every month after.
+    SELECT label,
+           period_start,
+           to_char(period_start, 'FMMonth')      AS month,
+           to_char(period_start, 'FMMonth YYYY') AS month_year
+      FROM dim_period
+     WHERE is_active
+     LIMIT 1
+),
+checks AS (
+    SELECT 'Test drive tab is out of date'::text AS issue,
+           ('The Test Drive tab''s latest entry is from '
+            || coalesce((SELECT to_char(max(td_date), 'FMMonth YYYY') FROM test_drive),
+                        'an earlier month')
+            || ', not ' || coalesce((SELECT month_year FROM active), 'the current month')
+            || '. The funnel uses the scorecard''s test-drive figures instead.')::text AS detail,
            (SELECT count(*)::text FROM test_drive
-             WHERE td_date < (SELECT period_start FROM dim_period
-                               WHERE is_active LIMIT 1)) AS affected_rows,
-           'high'::text AS severity
+             WHERE td_date < (SELECT period_start FROM active)) AS affected_rows,
+           'high'::text AS severity,
+           -- What the count is a count of, so the panel can say "31 test drives"
+           -- rather than "31 rows". Singular; the panel pluralises.
+           'test drive'::text AS unit
     UNION ALL
-    SELECT 'Comparision tab disagrees with the base tabs',
-           'Comparision reports 350 enquiries / 37 bookings / 20 retails; the '
-           || 'underlying tabs hold '
-           || (SELECT count(*) FROM lead WHERE is_current_period)::text || ' / '
-           || (SELECT count(*) FROM booking WHERE is_current_period)::text || ' / '
-           || (SELECT count(*) FROM registration WHERE status = 'REGISTERED')::text || '.',
-           '3', 'medium'
+    -- The Comparision tab is not loaded (see schema.sql): 350 and 37 are what
+    -- that tab showed in the August 2026 workbook when it was read. So the check
+    -- is scoped to that month - in any other it would set live figures against a
+    -- snapshot from a different workbook. Retails are left out because the
+    -- registration table carries no period, so no count of it could agree with
+    -- the retail figure the rest of the dashboard shows. The count is the number
+    -- of figures that still disagree, so the check clears itself if they match.
+    SELECT 'Comparison tab disagrees with the base tabs',
+           'In the August 2026 workbook, the Comparison tab reports 350 enquiries and '
+           || '37 bookings; the base tabs hold '
+           || (SELECT count(*) FROM lead WHERE is_current_period)::text || ' and '
+           || (SELECT count(*) FROM booking WHERE is_current_period)::text || '.',
+           ((350 <> (SELECT count(*) FROM lead WHERE is_current_period))::int
+            + (37 <> (SELECT count(*) FROM booking WHERE is_current_period))::int)::text,
+           'medium',
+           'figure'
+     WHERE (SELECT label FROM active) = 'AUG2026'
     UNION ALL
     SELECT 'Daily Tracker holds two conflicting target blocks',
-           'The upper block sets a different enquiry target for the same consultant '
-           || 'than the lower block. Views read BLOCK_2 (full roster).',
+           'The upper and lower target blocks set different enquiry targets for the '
+           || 'same consultant. The dashboard uses the lower block, which covers the '
+           || 'full team.',
            (SELECT count(DISTINCT consultant_label)::text FROM target_daily_tracker
              WHERE consultant_label IN (
                  SELECT consultant_label FROM target_daily_tracker
                  GROUP BY consultant_label HAVING count(DISTINCT block_label) > 1)),
-           'medium'
+           'medium',
+           'consultant'
     UNION ALL
-    SELECT 'August lead export is missing consultant and status columns',
-           'The Leads tab exported only date, name, source and model of interest, so '
-           || 'per-consultant enquiry counts must come from the scorecard.',
+    SELECT coalesce((SELECT month FROM active), 'This month')
+           || ' lead export is missing consultant and status columns',
+           'The Leads tab was exported with only the date, name, source and model of '
+           || 'interest, so enquiries per consultant are taken from the scorecard.',
            (SELECT count(*)::text FROM lead
              WHERE is_current_period AND consultant_id IS NULL),
-           'medium'
+           'medium',
+           'lead'
     UNION ALL
     SELECT 'Bookings not entered in the CRM',
-           'Bookings on the August tab with ZOHO ENTRY = NO. These will not appear in '
-           || 'VW-side reporting until they are punched.',
+           'Bookings on the ' || coalesce((SELECT month FROM active), 'current')
+           || ' tab marked ZOHO ENTRY = NO. They will not appear in VW reporting until '
+           || 'they are entered.',
            (SELECT count(*)::text FROM booking
              WHERE is_current_period AND crm_entry_done IS FALSE),
-           'high'
+           'high',
+           'booking'
     UNION ALL
     SELECT 'Allotments with no chassis on the source tab',
-           'The Alloted tab has no chassis column; rows were matched to stock on '
-           || 'model text and ageing. Unmatched rows have no vehicle link.',
+           'The Alloted tab has no chassis column, so allotments were matched to stock '
+           || 'by model and age. Unmatched allotments are not linked to a vehicle.',
            (SELECT count(*)::text FROM allotment WHERE vehicle_id IS NULL),
-           'low'
+           'low',
+           'allotment'
     UNION ALL
     SELECT 'Registration report stops at accounts',
-           'On the Reg Report tab the columns from FOLDER SENT TO HO rightwards - '
-           || 'invoice date, registration date, registration number, VOIW id and '
-           || 'delivery date - are blank on every row, so the fulfilment stage has '
-           || 'to be read from the status column instead.',
+           'On the Reg Report tab, every column from FOLDER SENT TO HO onwards - invoice '
+           || 'date, registration date and number, VOIW ID and delivery date - is blank, '
+           || 'so the fulfilment stage is read from the status column instead.',
            (SELECT count(*)::text FROM registration
              WHERE registration_date IS NULL AND invoice_date IS NULL),
-           'medium'
+           'medium',
+           'registration'
     UNION ALL
     SELECT 'Stock past its NADCON retail deadline',
-           'Units whose VW retail deadline has already passed while still unsold.',
+           'Unsold units whose VW retail deadline has already passed.',
            (SELECT count(*)::text FROM vehicle
              WHERE stock_status = 'FREESTOCK'
                AND nadcon_retail_date < CURRENT_DATE),
-           'high'
+           'high',
+           'unit'
 )
 SELECT * FROM checks WHERE affected_rows IS NOT NULL AND affected_rows <> '0';

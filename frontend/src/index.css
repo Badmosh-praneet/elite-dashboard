@@ -528,9 +528,16 @@ td.num, th.num { text-align: right; }
    Nothing is hidden here and no font changes. The rail gives back 40px, the
    cells give back 10px each, and the summary column - which now asks for
    whatever is left rather than competing for it - takes the difference. */
-@media (max-width: 1200px) {
+/* The lower bound is load-bearing. Without it this rule also matched every
+   phone and portrait tablet, and because it sits later in the file than the
+   rule that stacks the rail under 1000px, it won - forcing the rail back into
+   a 192px side column and squeezing the entire dashboard into what was left,
+   about 228px on a 420px phone. The band is laptops only. */
+@media (min-width: 1001px) and (max-width: 1200px) {
   .shell { grid-template-columns: 192px minmax(0, 1fr); }
   .rail { padding-left: 16px; padding-right: 16px; }
+}
+@media (max-width: 1200px) {
   .panel td, .panel th { padding-left: 9px; padding-right: 9px; }
 }
 

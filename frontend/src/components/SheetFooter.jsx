@@ -25,29 +25,7 @@
  */
 
 import React from 'react';
-
-/* The rail reports the connection as one of four states, and one of them is
-   reported two ways: a failed connection on a serverless host arrives as
-   state "live" with the text "snapshot". Read both, or a snapshot would be
-   called live - which is the bug this replaced. */
-function connection(liveStatus = {}) {
-  const { state, text } = liveStatus;
-  if (state === 'snapshot' || text === 'snapshot') return 'snapshot';
-  if (state === 'live') return 'live';
-  // "offline" is the browser failing to open the stream at all, and nothing
-  // retries it - so it is not reconnecting, and saying so would be a smaller
-  // version of the lie this replaced.
-  if (state === 'down') return text === 'offline' ? 'offline' : 'down';
-  return 'connecting';
-}
-
-const COPY = {
-  live:       { label: 'Live',         stamp: 'updated' },
-  down:       { label: 'Reconnecting', stamp: 'last updated' },
-  offline:    { label: 'Offline',      stamp: 'last updated' },
-  snapshot:   { label: 'Snapshot',     stamp: 'as of' },
-  connecting: { label: 'Connecting',   stamp: null },
-};
+import { connection, CONNECTION } from './connection';
 
 /* A clock time alone is ambiguous once the screenshot is a day old, so the
    date rides with it. The year does not: the period beside it carries one. */
@@ -74,7 +52,7 @@ export default function SheetFooter({
   })();
 
   const state = connection(liveStatus);
-  const copy = COPY[state];
+  const copy = CONNECTION[state];
   const when = copy.stamp ? stamp(loadedAt) : null;
 
   return (
@@ -89,7 +67,7 @@ export default function SheetFooter({
           {period.label || '—'}{span ? ` · ${span}` : ''}
         </div>
         {/* aria-live so a reconnect is announced once, not silently swapped. */}
-        <div className="colophon-source" data-state={state} aria-live="polite">
+        <div className="colophon-source" data-tone={copy.tone} aria-live="polite">
           <span className="colophon-dot" aria-hidden="true" />
           {copy.label}
           {when ? ` · ${copy.stamp} ${when}` : '…'}

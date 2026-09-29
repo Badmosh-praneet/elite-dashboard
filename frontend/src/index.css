@@ -268,38 +268,68 @@ button.primary:hover {
   color: var(--surface);
 }
 
-/* Live Badge */
-/* 判子 hanko. A seal is stamped by hand, so it sits very slightly off true -
-   that tilt is the whole difference between printed and pressed. */
+/* Live indicator
+   ------------------------------------------------------------------
+   The dot carries the state. The word stays ink, and joins the dot in colour
+   only when the state needs attention - a calm sheet should look calm, and a
+   failing one should get louder in proportion.
+
+   It used to be the opposite of all three of those. The word was green in
+   every state, so RECONNECTING and OFFLINE read as healthy. The dot was navy,
+   a different colour from the word it sat beside, because it had been
+   switched from the good token to the brand accent and the text never
+   followed. And it pulsed every 2.2 seconds, forever, in every state but one -
+   the one thing on the sheet that never stopped moving, and so the one thing
+   whose movement meant nothing. Now it is still, and ripples once when a
+   change actually lands. */
 .live-badge {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   font-size: var(--fs-small);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--good-text);
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
   font-weight: 600;
   letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  transition: color var(--t-slow) var(--ease-out);
 }
-.live-dot {
-  width: 8px;
-  height: 8px;
+.live-dot,
+.colophon-dot {
+  position: relative;
+  flex: none;
   border-radius: 50%;
-  background: var(--good);
-  animation: pulseDot 2.2s infinite;
+  background: var(--ink-muted);
+  transition: background var(--t-slow) var(--ease-out);
 }
-.live-dot { background: var(--shu); }
-.live-dot.down { background: var(--ink-muted); animation: none; }
-@keyframes pulseDot {
-  0% { transform: scale(0.95); opacity: 0.7; }
-  50% { transform: scale(1.15); opacity: 1; }
-  100% { transform: scale(0.95); opacity: 0.7; }
+.live-dot { width: 7px; height: 7px; }
+
+/* One vocabulary for both places the connection is reported - see
+   connection.js, which is where the tone comes from. */
+[data-tone="good"] > .live-dot,
+[data-tone="good"] > .colophon-dot    { background: var(--good); }
+[data-tone="warning"] > .live-dot,
+[data-tone="warning"] > .colophon-dot { background: var(--warning); }
+.live-badge[data-tone="warning"],
+.colophon-source[data-tone="warning"] { color: var(--warning); }
+
+/* The ripple copies the dot's own colour by inheriting its background, so it
+   is right in every tone and both themes without naming one. */
+.live-dot.is-fresh::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: liveRipple var(--t-slow) var(--ease-out) 1 forwards;
 }
+@keyframes liveRipple {
+  from { transform: scale(1); opacity: 0.6; }
+  to   { transform: scale(3.2); opacity: 0; }
+}
+
+/* Header.jsx still asks for this class. That component is not rendered
+   anywhere, but a stale rule is cheaper than a broken one if it returns. */
+.live-dot.down { background: var(--ink-muted); }
 
 /* Way 1 Action Bar */
 .way1-bar {
@@ -842,10 +872,11 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
      nothing on the page was deliberately timed. If a new value seems needed,
      the answer is almost always one of these two.
 
-     Three animations are exempt, and should stay exempt: pulseDot, soak and
-     spin. They are continuous loops rather than transitions between states -
-     their duration sets a rhythm, not a response time, and a 140ms heartbeat
-     would be a strobe. */
+     Two animations are exempt, and should stay exempt: soak and spin. They
+     are continuous loops rather than transitions between states - their
+     duration sets a rhythm, not a response time, and a 140ms spinner would be
+     a strobe. The live dot used to be a third; it no longer loops at all,
+     and ripples once on --t-slow when a change arrives. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --t-fast: 140ms;
   --t-slow: 320ms;
@@ -1719,16 +1750,9 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   font-variant-numeric: tabular-nums;
 }
 
-/* Same meaning as the rail's dot, deliberately without its pulse: one thing
-   breathing on the page is a heartbeat, two is a distraction. */
-.colophon-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ink-muted);
-}
-.colophon-source[data-state="live"] .colophon-dot { background: var(--shu); }
+/* Same meaning and colour as the rail's dot - the tone rules are shared - and
+   never animated: the rail announces a change; the footer only records it. */
+.colophon-dot { width: 6px; height: 6px; }
 
 @media (max-width: 640px) {
   .colophon-meta { text-align: left; }

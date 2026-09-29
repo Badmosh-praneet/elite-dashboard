@@ -13,6 +13,7 @@ import {
   PlusCircle, UserPlus, Compass, KeyRound, UploadCloud, Download,
   RefreshCw, Table, Sun, Moon, Headset, CalendarCog, ChevronDown
 } from 'lucide-react';
+import { connection, justUpdated, CONNECTION } from './connection';
 
 const ENTRIES = [
   { tab: 'booking', label: 'New booking', Icon: PlusCircle },
@@ -114,10 +115,24 @@ export default function Rail({
           <CalendarCog size={13} />
           <span>Manage months</span>
         </button>
-        <span className="live-badge rail-live">
-          <span className={`live-dot ${liveStatus.state === 'down' ? 'down' : ''}`} />
-          {liveStatus.text}
-        </span>
+        {/* The state comes from the same reader the footer uses, so the two
+            can no longer disagree. The word stays ink; only the dot carries
+            colour, and only a dot that means what it says. It moves once, when
+            a change actually lands, instead of breathing forever - a pulse on
+            every frame of every hour is indistinguishable from a pulse that
+            means something. */}
+        {(() => {
+          const state = connection(liveStatus);
+          const { label, tone } = CONNECTION[state];
+          const fresh = justUpdated(liveStatus);
+          return (
+            <span className="live-badge rail-live" data-tone={tone}
+                  role="status" aria-live="polite">
+              <span className={`live-dot ${fresh ? 'is-fresh' : ''}`} aria-hidden="true" />
+              {fresh ? 'Updated just now' : label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* The site's navigation. NavLink renders a real anchor with a real

@@ -65,6 +65,10 @@ function Dashboard() {
   const [error, setError] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [liveStatus, setLiveStatus] = useState({ state: 'off', text: 'connecting' });
+  // When the figures on screen were last drawn. A screenshot of this sheet
+  // travels - into Teams, into a deck - and the first question anyone asks of
+  // it is 'as of when?'. The footer answers with this.
+  const [loadedAt, setLoadedAt] = useState(null);
   const [loaded, setLoaded] = useState(0);
 
   // UI States
@@ -136,6 +140,7 @@ function Dashboard() {
       }
       const res = await inFlightRef.current;
       setData(res);
+      setLoadedAt(new Date());
       hasLoadedRef.current = true;
       setError(null);
     } catch (err) {
@@ -319,10 +324,9 @@ function Dashboard() {
         )}
 
       <SheetFooter
-        kpi={data?.kpi || {}}
         period={activePeriodObj}
-        board={data?.board || []}
         liveStatus={liveStatus}
+        loadedAt={loadedAt}
       />
       </main>
 

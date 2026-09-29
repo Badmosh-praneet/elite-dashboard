@@ -1,17 +1,30 @@
 /**
  * The month as shares rather than counts.
  *
- * Everything on this panel answers "of the whole, how much is X". That is the
- * one question a ring answers better than a bar, which is why these are the
- * only rings on the sheet - and why the cuts drawn here were picked for having
- * few enough categories to read at a glance. The order book sits in four
- * states, the dealership sells four model families. Colour has twelve, so its
- * tail is folded into Other by the endpoint rather than drawn as twelve
- * unreadable slivers.
+ * Everything on this panel answers "of the whole, how much is X". It used to
+ * answer it with three rings, on the argument that a ring is the one shape that
+ * says "share" better than a bar. The rings could not say it at all.
  *
- * Two splits are deliberately not rings. Fresh against punched cars, and one
- * team against the other, are single numbers with a complement - a ring for a
- * two-way split is a worse bar. They are drawn as one bar each.
+ * Colour was dealt out by position in a list sorted largest-first, and the
+ * first slot on the ramp is its palest. So the biggest slice in every ring was
+ * the least visible thing in it - Virtus, the top seller at 48%, Candy White at
+ * 31%, Allotted at 43%, all drawn in a blue a shade off the background - and
+ * because Recharts sets legend text in the slice colour, the same three had the
+ * three labels nobody could read. The paint chart coloured Carbon Steel Gray
+ * red, because it happened to land on the sixth slot. None of it showed a
+ * number: twenty Virtus against fourteen facelift Taiguns was a judgement of
+ * two angles. And each ring printed "42 bookings" in its middle, under a
+ * heading that already said so.
+ *
+ * So these are share bars, the same device the two-way splits below have
+ * always used: a row per category with its count and its share written out,
+ * and a bar scaled to the whole month so a glance still reads as a fraction.
+ * Nothing needs a legend, because every label sits on its own row. The order
+ * book is drawn in pipeline order, because it is a process; the rest largest
+ * first. Paint gets a swatch of the actual paint - the one place on the sheet
+ * where colour is the data rather than a code for it.
+ *
+ * Colour has twelve values, so its tail is folded into Other by the endpoint.
  *
  * The weekday chart is not a share at all. It is here because it answers the
  * question the shares provoke: enquiries arrive midweek and bookings close at
@@ -20,38 +33,20 @@
 
 import React, { useEffect, useState } from 'react';
 import {
-  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
   ResponsiveContainer, Tooltip as RechartsTooltip, Legend,
 } from 'recharts';
 import { api, n0 } from '../api/client';
 
 const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 
-/* Same ordinal ramp the stacks use, so a model is the same colour wherever it
-   appears on the sheet. "Other" stays the quietest thing in the ring. */
+/* The ordinal ramp, used now only by the two-way splits below. It is dealt by
+   position, so it does not keep a category the same colour across charts - an
+   earlier note here said it did. "Other" stays the quietest thing present. */
 const RAMP = ['var(--o1)', 'var(--o2)', 'var(--o3)', 'var(--o4)', 'var(--o5)',
               'var(--viz-2)'];
 const colourFor = (name, i) =>
   (name === 'Other' || name === 'Unspecified' ? 'var(--ink-muted)' : RAMP[i % RAMP.length]);
-
-function Tip({ active, payload, total }) {
-  if (!active || !payload || !payload.length) return null;
-  const p = payload[0];
-  const value = Number(p.value) || 0;
-  const share = total ? Math.round((1000 * value) / total) / 10 : null;
-  return (
-    <div style={{
-      background: 'var(--surface)', border: '1px solid var(--grid)',
-      padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
-    }}>
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.name}</div>
-      <div style={{ color: 'var(--ink-2)' }}>
-        {n0(value)}{share != null && <> &middot; {share}%</>}
-      </div>
-    </div>
-  );
-}
 
 function BarTip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
@@ -74,57 +69,95 @@ function BarTip({ active, payload, label }) {
   );
 }
 
-/** A ring with its total in the middle, because the share is only half the answer. */
-function Donut({ title, note, data, unit }) {
-  const total = (data || []).reduce((a, d) => a + d.value, 0);
+/* Approximate paint for a colour name. Matched on the word that names the
+   hue, so "Deep Black Pearl" and "Deep Black Pearlescent" land on the same
+   swatch, and checked in order so Carbon Steel Gray is the dark grey before
+   "gray" alone can claim it, and Lava Blue the deep blue before "blue". A name
+   that matches nothing gets an empty ring rather than an invented colour. */
+const PAINT = [
+  [/white/i, '#f4f4f1'],
+  [/black/i, '#17181b'],
+  [/silver/i, '#b9bcc1'],
+  [/carbon|graphite|charcoal/i, '#4b4f55'],
+  [/gr[ae]y/i, '#83878d'],
+  [/lava|lapiz|night|navy/i, '#1f3a6b'],
+  [/blue/i, '#2f6cb2'],
+  [/red|cherry|ruby|maroon/i, '#9d1c25'],
+  [/yellow|curcuma|gold/i, '#dba427'],
+  [/green|avocado|olive/i, '#667546'],
+  [/orange|copper/i, '#c3622e'],
+  [/brown|bronze|beige/i, '#7a5a3e'],
+];
+const paintFor = name => (PAINT.find(([re]) => re.test(name)) || [])[1] || null;
+
+/* The endpoint sends model families in capitals. Everywhere else on the sheet
+   they read as words - "Virtus", "Taigun (FL)" - so these do too; short and
+   bracketed tokens are codes and keep their capitals. */
+function label(name) {
+  if (name !== name.toUpperCase()) return name;
+  return name.split(/\s+/).map(w =>
+    (w.length <= 3 || /[()\d]/.test(w)) ? w : w[0] + w.slice(1).toLowerCase(),
+  ).join(' ');
+}
+
+/* A booking moves through these in order, so they are drawn in order. */
+const PIPELINE = ['Booked', 'Awaiting stock', 'Allotted', 'Retailed'];
+const byPipeline = rows => [...rows].sort((a, b) => {
+  const ia = PIPELINE.indexOf(a.name), ib = PIPELINE.indexOf(b.name);
+  return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+});
+/* Largest first, with Other last however large it is: it is the remainder,
+   not a contender. */
+const bySize = rows => [...rows].sort((a, b) => {
+  const oa = a.name === 'Other', ob = b.name === 'Other';
+  if (oa !== ob) return oa ? 1 : -1;
+  return b.value - a.value;
+});
+
+/** One row per category: what it is, how many, what share - and a bar scaled to
+    the whole month, so the fraction still reads at a glance. */
+function ShareBars({ title, note, rows = [], swatches = false }) {
+  const total = rows.reduce((a, d) => a + d.value, 0);
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="panel-header" style={{ marginBottom: 10 }}>
+    <div className="panel">
+      <div className="panel-header" style={{ marginBottom: 12 }}>
         <h2>{title}</h2>
         <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>{note}</span>
       </div>
-      <div style={{ height: 240, width: '100%', position: 'relative' }}>
-        {!data || !data.length ? (
-          <div style={{ display: 'flex', height: '100%', alignItems: 'center',
-                        justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 'var(--fs-body)' }}>
-            Nothing recorded yet.
-          </div>
-        ) : (
-          <>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={data} dataKey="value" nameKey="name"
-                     innerRadius="56%" outerRadius="80%" paddingAngle={1}
-                     stroke="var(--surface)" strokeWidth={2}>
-                  {data.map((d, i) => (
-                    <Cell key={d.name} fill={colourFor(d.name, i)} />
-                  ))}
-                </Pie>
-                <RechartsTooltip content={p => <Tip {...p} total={total} />} />
-                <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}
-                        iconType="circle" />
-              </PieChart>
-            </ResponsiveContainer>
-            {/* Centred on the ring, not on the panel - the legend sits below and
-                would drag a flex-centred label off the hole. */}
-            <div style={{
-              position: 'absolute', top: '42%', left: 0, right: 0,
-              transform: 'translateY(-50%)', textAlign: 'center',
-              pointerEvents: 'none',
-            }}>
-              <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.03em',
-                            color: 'var(--ink)', lineHeight: 1 }}>
-                {n0(total)}
+      {!rows.length || !total ? (
+        <div className="share-empty">Nothing recorded yet.</div>
+      ) : (
+        <div className="share-list">
+          {rows.map(r => {
+            const share = (100 * r.value) / total;
+            const other = r.name === 'Other' || r.name === 'Unspecified';
+            const paint = swatches && !other ? paintFor(r.name) : null;
+            return (
+              <div key={r.name} className="share-row"
+                   data-other={other || undefined}
+                   title={`${r.name}: ${n0(r.value)} of ${n0(total)} (${share.toFixed(1)}%)`}>
+                <div className="share-line">
+                  <span className="share-name">
+                    {swatches && (
+                      <span className="share-swatch" aria-hidden="true"
+                            data-empty={paint ? undefined : true}
+                            style={paint ? { background: paint } : undefined} />
+                    )}
+                    <span className="share-text">{label(r.name)}</span>
+                  </span>
+                  <span className="share-figs">
+                    <b>{n0(r.value)}</b>
+                    <span>{Math.round(share)}%</span>
+                  </span>
+                </div>
+                <div className="share-track" aria-hidden="true">
+                  <div style={{ width: `${Math.max(share, 1.5)}%` }} />
+                </div>
               </div>
-              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-muted)',
-                            textTransform: 'uppercase', letterSpacing: '0.08em',
-                            marginTop: 3 }}>
-                {unit}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -200,7 +233,7 @@ export default function Composition({ refreshKey }) {
         <h2>How the month splits</h2>
         <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           {!data ? 'Reading the month…'
-            : `${data.period} — every ring totals the ${n0(
+            : `${data.period} — each is a share of the month's ${n0(
                 (data.order_book || []).reduce((a, d) => a + d.value, 0))} bookings`}
         </span>
       </div>
@@ -209,15 +242,15 @@ export default function Composition({ refreshKey }) {
         display: 'grid', gap: 20, marginBottom: 20,
         gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
       }}>
-        <Donut title="Where the order book stands"
-               note="Every booking, by fulfilment state"
-               data={data?.order_book} unit="bookings" />
-        <Donut title="What is selling"
-               note="Bookings by model family"
-               data={data?.by_model} unit="bookings" />
-        <Donut title="Colours customers choose"
-               note="Bookings by colour, rarest folded into Other"
-               data={data?.by_colour} unit="bookings" />
+        <ShareBars title="Where the order book stands"
+                   note="Every booking, in the order it moves through"
+                   rows={byPipeline(data?.order_book || [])} />
+        <ShareBars title="What is selling"
+                   note="Bookings by model family"
+                   rows={bySize(data?.by_model || [])} />
+        <ShareBars title="Colours customers choose"
+                   note="Bookings by paint, rarest folded into Other"
+                   rows={bySize(data?.by_colour || [])} swatches />
       </div>
 
       <div className="grid-2">

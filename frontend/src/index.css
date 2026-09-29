@@ -547,6 +547,62 @@ tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface-sub); }
 td.num, th.num { text-align: right; }
 
+/* Share bars - how the month splits
+   ------------------------------------------------------------------
+   A row per category, its count and share written out, and a bar scaled to
+   the whole month. One ink for every bar: length carries the value, so a
+   second colour would only be a code the reader has to learn. Other is the
+   remainder and is drawn quieter, the way the rings always meant it to be. */
+.share-list { display: flex; flex-direction: column; }
+.share-row { padding: 7px 0 9px; border-bottom: 1px solid var(--grid); }
+.share-row:last-child { border-bottom: none; }
+.share-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.share-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+.share-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-figs {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-small);
+  color: var(--ink-muted);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.share-figs b { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+/* Wide enough for "100%", so the counts beside it line up down the column. */
+.share-figs span { min-width: 3.2ch; text-align: right; }
+.share-track { height: 4px; margin-top: 6px; background: var(--sunken); }
+.share-track > div {
+  height: 100%;
+  background: var(--viz-1);
+  transition: width var(--t-slow) var(--ease-out);
+}
+.share-row[data-other] .share-name { color: var(--ink-muted); }
+.share-row[data-other] .share-track > div { background: var(--ink-muted); }
+/* The paint itself. An inset hairline keeps Candy White visible on a white
+   sheet and Deep Black visible on the night one. */
+.share-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--axis);
+}
+.share-swatch[data-empty] { background: transparent; }
+.share-empty { padding: 28px 0; font-size: var(--fs-body); color: var(--ink-muted); }
+
 /* Backorders worklist
    ------------------------------------------------------------------
    The same instrument as the rest of the sheet: hairlines between rows, no

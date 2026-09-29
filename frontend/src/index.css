@@ -1198,14 +1198,30 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   text-transform: uppercase;
   color: var(--ink-muted);
 }
-.hero-context {
+/* Where the month stands, as a small badge: a dot and a few words, in the
+   same vocabulary as the live indicator in the rail. Muted once a month is
+   closed; the accent while it is still running. */
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: var(--fs-micro);
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-muted);
   font-variant-numeric: lining-nums tabular-nums;
 }
-.hero-context[title] { cursor: help; }
+.hero-badge[title] { cursor: help; }
+.hero-badge-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+}
+.hero-badge[data-live] { color: var(--ink-2); }
+.hero-badge[data-live] .hero-badge-dot { background: var(--shu); }
 
 .hero-row {
   display: flex;
@@ -1273,30 +1289,48 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
    bookings should stand by now - it used to sit exactly at the end of the bar,
    which drew one fact twice. The old meter was a 12px rounded bar, the only
    rounded thing left on the page. */
+/* 8px, square-ended. It was a 3px hairline under a hundred-pixel numeral,
+   which made the one visual of progress on the section the easiest thing on
+   it to miss. Still square: the page has no rounded bars. */
 .hero-meter {
   position: relative;
-  height: 3px;
+  height: 8px;
   background: var(--sunken);
 }
 .hero-meter-fill {
-  height: 3px;
-  transition: width var(--t-slow) var(--ease-out);
+  height: 100%;
+  transition: width var(--t-slow) var(--ease-out),
+              background var(--t-slow) var(--ease-out);
 }
+/* Where bookings should stand by now. It stands proud of the bar on both
+   sides so it reads against the fill and the empty track alike. */
 .hero-meter-tick {
   position: absolute;
-  top: -6px;
-  width: 1px;
-  height: 15px;
+  top: -5px;
+  width: 2px;
+  height: 18px;
+  margin-left: -1px;
   background: var(--ink);
   transition: left var(--t-slow) var(--ease-out);
 }
 .hero-scale {
+  position: relative;
   display: flex;
   justify-content: space-between;
   font-size: var(--fs-micro);
   letter-spacing: 0.06em;
   color: var(--ink-muted);
   margin-top: 9px;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+/* The bar's own value, under the point it reaches. */
+.hero-scale-pct {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: var(--ink);
+  font-weight: 600;
+  transition: left var(--t-slow) var(--ease-out);
 }
 
 @media (max-width: 720px) {

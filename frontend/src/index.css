@@ -1181,14 +1181,31 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
 }
 .hero-band > *:not([aria-hidden]) { position: relative; z-index: 1; }
 
+/* What the figure is, and - on the same line, at the far end - where in its
+   month it stands: closed, or day N of M with the bookings expected by now. */
+.hero-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 24px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
 .hero-label {
   font-size: var(--fs-micro);
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--ink-muted);
-  margin-bottom: 20px;
 }
+.hero-context {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.hero-context[title] { cursor: help; }
 
 .hero-row {
   display: flex;
@@ -1252,8 +1269,10 @@ tr:hover td { background: rgba(193, 67, 42, 0.035); }
   font-variant-numeric: lining-nums tabular-nums;
 }
 
-/* A rule, not a pill: 3px, square, with a tick at the position reached. The
-   old meter was a 12px rounded bar - the only rounded thing left on the page. */
+/* A rule, not a pill: 3px, square. In a running month a tick marks where the
+   bookings should stand by now - it used to sit exactly at the end of the bar,
+   which drew one fact twice. The old meter was a 12px rounded bar, the only
+   rounded thing left on the page. */
 .hero-meter {
   position: relative;
   height: 3px;

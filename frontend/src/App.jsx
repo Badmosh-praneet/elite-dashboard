@@ -248,7 +248,8 @@ function Dashboard() {
 
         {activeTab === 'overview' && (
           <>
-            <HeroMetric kpi={data?.kpi || {}} />
+            <HeroMetric kpi={data?.kpi || {}} period={activePeriodObj}
+                        trends={data?.trends || {}} />
             <KpiTiles kpi={data?.kpi || {}} trends={data?.trends || {}} />
             <div style={{ marginTop: 26 }}>
               <SalesFunnel funnel={data?.funnel || {}} />

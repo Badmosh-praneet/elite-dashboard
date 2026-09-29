@@ -517,6 +517,81 @@ tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface-sub); }
 td.num, th.num { text-align: right; }
 
+/* Backorders worklist
+   ------------------------------------------------------------------
+   The same instrument as the rest of the sheet: hairlines between rows, no
+   boxes, a meter where a comparison helps. Deliverable orders carry a rule in
+   the good colour at their left edge - the one thing on this panel that asks
+   someone to act today - and nothing else here is coloured without a reason. */
+.bo-list { min-height: 340px; display: flex; flex-direction: column; }
+.bo-group + .bo-group { margin-top: 16px; }
+.bo-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--axis);
+}
+.bo-label > span:last-child { font-variant-numeric: lining-nums tabular-nums; }
+.bo-row {
+  display: grid;
+  /* who · car and consultant · status · days */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 104px 52px;
+  align-items: center;
+  column-gap: 14px;
+  padding: 8px 0 8px 12px;
+  border-bottom: 1px solid var(--grid);
+  box-shadow: inset 2px 0 0 transparent;
+  transition: box-shadow var(--t-fast) var(--ease-out),
+              background var(--t-fast) var(--ease-out);
+}
+.bo-row:hover { background: var(--surface-sub); box-shadow: inset 2px 0 0 var(--axis); }
+.bo-row[data-tone="deliver"],
+.bo-row[data-tone="deliver"]:hover { box-shadow: inset 2px 0 0 var(--good); }
+.bo-who, .bo-car { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.bo-who { font-size: var(--fs-body); color: var(--ink); }
+.bo-car { font-size: var(--fs-small); color: var(--ink-muted); }
+.bo-status { display: flex; align-items: center; justify-content: flex-end; min-width: 0; }
+.bo-free { color: var(--good-text); font-weight: 600; font-size: var(--fs-small); white-space: nowrap; }
+.bo-meter { display: block; width: 100%; height: 3px; background: var(--sunken); }
+.bo-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--viz-1);
+  transition: width var(--t-slow) var(--ease-out);
+}
+.bo-days {
+  justify-self: end;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+/* A wait past a year is either a customer let down badly or a row nobody
+   closed. Either way it needs a person, so it is the one figure marked. */
+.bo-days.is-stale { color: var(--serious); font-weight: 600; }
+
+/* Narrow panel - a phone, or a column squeezed below its content - the row
+   folds to two lines rather than truncating the car to nothing. Measured
+   against the panel, not the window, because the same panel is full width
+   below ~1310px and half width above it. */
+.bo-list { container-type: inline-size; }
+@container (max-width: 500px) {
+  .bo-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "who days" "car status";
+    row-gap: 3px;
+  }
+  .bo-who    { grid-area: who; }
+  .bo-days   { grid-area: days; }
+  .bo-car    { grid-area: car; }
+  .bo-status { grid-area: status; width: 96px; }
+}
+.bo-more { align-self: flex-start; margin-top: 12px; padding: 5px 12px; font-size: var(--fs-small); }
+
 /* Laptop widths: the sheet stops competing with its own chrome.
    ------------------------------------------------------------------
    At 1024 the rail took 232px and eight columns of 14px padding took

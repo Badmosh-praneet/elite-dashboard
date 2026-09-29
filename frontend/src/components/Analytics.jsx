@@ -13,7 +13,7 @@
 import React from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
-  Tooltip as RechartsTooltip, Legend, LineChart, Line, LabelList, Cell,
+  Tooltip as RechartsTooltip, Legend, LineChart, Line, LabelList,
 } from 'recharts';
 import { n0, pct } from '../api/client';
 
@@ -297,75 +297,175 @@ export function StockAgeing({ ageing = [] }) {
   );
 }
 
-/* ---- 4. Backorders: who has waited longest, and is there a car for them ---- */
+/* ---- 4. Backorders: who can be delivered today, and who is still waiting ---- */
+
+/* This used to be a bar chart of this month's ten longest waits, and it hid
+   the most useful fact the data holds. Its subtitle said one order already had
+   a matching free car. Four did - and the three it never drew were carry-over,
+   two of them open for 514 days while their exact car, same variant and same
+   colour, sat unallotted on the floor. Carry-over was left out of the plot
+   because a 514-day bar crushes every 20-day bar beside it, which was true;
+   but the fix for a scale problem cannot be to hide the orders that matter
+   most.
+
+   It was also the wrong shape for the question. A bar chart draws one thing,
+   days, and a manager reading this panel is asking two others: who can I
+   deliver today, and which car is each person waiting for. The model was only
+   in the tooltip, so you learned it one hover at a time.
+
+   So it is a worklist. Anything that can be filled from stock right now goes
+   first, from any month, and is never collapsed away. This month's waits
+   follow with a meter, so the comparison the chart made survives. Earlier
+   months are a count until asked for. Every row names the car and the
+   consultant, because a row that does not say who should act is a statistic.
+
+   Customer mobile numbers are in the data and deliberately not on the row.
+   This screen is demoed and screenshotted; the number belongs in the CRM. */
+
+const cap = w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+const words = s => String(s || '').split(/\s+/).filter(Boolean);
+/* Workbook names arrive in capitals; a worklist of them reads as shouting. */
+const nameCase = s => words(s).map(cap).join(' ');
+/* Trim codes are a mix of acronyms and words - DSG, AT, GT beside Topline and
+   Sport - so short and numeric tokens keep their capitals and the rest do not,
+   which is how Volkswagen writes them: "Virtus GT Line AT". */
+const trimCase = s => words(s)
+  .map(w => (/\d/.test(w) || w.length <= 3) ? w.toUpperCase() : cap(w))
+  .join(' ');
+
+/* Past a year an order is either a customer who has been badly let down or a
+   row nobody closed. The sheet cannot tell which, so it says so and leaves the
+   judgement to someone who can pick up the phone. */
+const STALE_DAYS = 365;
+
+/* Rows shown before "show all". Chosen so the default panel holds the height
+   of Stock Ageing beside it and the grid pair stays level. Deliverable orders
+   are never counted against this: if a month has more cars to hand over, the
+   panel grows, because that is the one list here that must never be cut. */
+const WAITING_PREVIEW = 3;
+
+function OrderRow({ r, tone, scale }) {
+  const car = [cap(r.model || ''), trimCase(r.variant)].filter(Boolean).join(' ');
+  const stale = r.days >= STALE_DAYS;
+  /* The full line lives in the hover title as well, because the car cell
+     ellipsises on a narrow column and a clipped consultant name is the one
+     thing on the row someone would need to read. */
+  const hint = [
+    [car, r.consultant].filter(Boolean).join(' · '),
+    r.colour,
+    stale ? 'Open for over a year - confirm the order is still live before calling.' : null,
+  ].filter(Boolean).join(' · ');
+
+  /* Four cells on one line: who, which car and who owns it, where it stands,
+     and how long. The third cell changes meaning by group - a count on the
+     floor when there is a car to hand over, a meter when there is only the
+     wait to compare - so each row carries exactly one status, never two. */
+  return (
+    <div className="bo-row" data-tone={tone} title={hint || undefined}>
+      <span className="bo-who">{nameCase(r.who)}</span>
+      <span className="bo-car">
+        {car || 'Model not recorded'}
+        {r.consultant ? ` · ${r.consultant}` : ''}
+      </span>
+      <span className="bo-status">
+        {tone === 'deliver' && <span className="bo-free">{n0(r.free)} on the floor</span>}
+        {tone === 'wait' && scale > 0 && (
+          <span className="bo-meter" aria-hidden="true">
+            <span style={{ width: `${Math.max(3, (r.days / scale) * 100)}%` }} />
+          </span>
+        )}
+      </span>
+      <span className={`bo-days ${stale ? 'is-stale' : ''}`}>{n0(r.days)}d</span>
+    </div>
+  );
+}
+
+function OrderGroup({ label, count, children }) {
+  return (
+    <div className="bo-group">
+      <div className="bo-label">
+        <span>{label}</span>
+        <span>{n0(count)}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 export function Backorders({ backorders = [] }) {
-  // The panel used to plot all 21 rows, but ten of them are carry-over from
-  // earlier months sitting at ~500 days. They set the scale, so this month's
-  // orders - the ones anyone can still act on - were drawn as stubs, and the
-  // count disagreed with the Backorders tile, which counts the current period
-  // only. Current month leads; the rest is stated, not plotted.
-  const current = backorders.filter(b => b.is_current_period);
-  const carried = backorders.filter(b => !b.is_current_period);
+  const [open, setOpen] = React.useState(false);
 
-  const data = [...current]
-    .sort((a, b) => num(b.days_waiting) - num(a.days_waiting))
-    .slice(0, 10)
-    .map(b => ({
-      who: b.customer_name || 'Unknown',
-      model: b.model_family || b.model || '',
-      Waiting: num(b.days_waiting),
-      matched: num(b.matching_free_units) > 0,
-    }));
+  const rows = backorders.map((b, i) => ({
+    key: b.booking_id ?? i,
+    who: b.customer_name || 'Unknown customer',
+    model: b.model_family || b.model || '',
+    variant: b.variant || '',
+    colour: b.colour || '',
+    consultant: b.consultant || '',
+    days: num(b.days_waiting),
+    free: num(b.matching_free_units),
+    current: !!b.is_current_period,
+  }));
 
-  const matchedCount = current.filter(b => num(b.matching_free_units) > 0).length;
+  const byWait = (a, b) => b.days - a.days;
+  const deliverable = rows.filter(r => r.free > 0).sort(byWait);
+  const waiting = rows.filter(r => r.free === 0 && r.current).sort(byWait);
+  const earlier = rows.filter(r => r.free === 0 && !r.current).sort(byWait);
+
+  // Period totals stay period totals, so this agrees with the Backorders tile,
+  // which counts the current month only.
+  const thisMonth = rows.filter(r => r.current).length;
+  const fromEarlier = rows.length - thisMonth;
+
   const sub = [
-    `${current.length} waiting this month`,
-    matchedCount ? `${matchedCount} already has a matching free car` : null,
-    carried.length ? `${carried.length} carried over from earlier months` : null,
+    deliverable.length
+      ? `${n0(deliverable.length)} can be delivered from stock today`
+      : 'None can be filled from current stock',
+    `${n0(thisMonth)} open this month`,
+    fromEarlier ? `${n0(fromEarlier)} from earlier months` : null,
   ].filter(Boolean).join(' · ');
+
+  const shownWaiting = open ? waiting : waiting.slice(0, WAITING_PREVIEW);
+  const scale = Math.max(0, ...waiting.map(r => r.days));
+  const hidden = rows.length - deliverable.length - shownWaiting.length;
 
   return (
     <Panel
       title="Backorders Awaiting Stock"
       sub={sub}
-      empty={!data.length}
-      height={340}
+      empty={!rows.length}
+      height={rows.length ? 'auto' : 340}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical"
-                  margin={{ top: 4, right: 52, left: 4, bottom: 0 }} barSize={18}>
-          <CartesianGrid stroke="var(--grid)" strokeWidth={1} horizontal={false} />
-          <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
-                 tickFormatter={v => `${v}d`} />
-          <YAxis type="category" dataKey="who" width={132} axisLine={false}
-                 tickLine={false} tick={{ ...AXIS, fontSize: 'var(--fs-small)' }} interval={0} />
-          <RechartsTooltip
-            content={props => {
-              const p = props.payload && props.payload[0];
-              return (
-                <Tip
-                  {...props}
-                  suffix=" days"
-                  title={p ? `${p.payload.who} · ${p.payload.model}` : props.label}
-                />
-              );
-            }}
-            cursor={{ fill: 'var(--grid)', opacity: 0.4 }}
-          />
-          <Bar dataKey="Waiting" name="Days waiting" radius={[0, 3, 3, 0]}>
-            {data.map((d, i) => (
-              <Cell key={i} fill={d.matched ? 'var(--warning)' : 'var(--viz-1)'} />
-            ))}
-            <LabelList
-              dataKey="Waiting"
-              position="right"
-              formatter={v => `${v}d`}
-              style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }}
-            />
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+      <div className="bo-list">
+        {deliverable.length > 0 && (
+          <OrderGroup label="Deliverable now" count={deliverable.length}>
+            {deliverable.map(r => <OrderRow key={r.key} r={r} tone="deliver" />)}
+          </OrderGroup>
+        )}
+
+        {waiting.length > 0 && (
+          <OrderGroup label="Waiting on stock · this month" count={waiting.length}>
+            {shownWaiting.map(r => <OrderRow key={r.key} r={r} tone="wait" scale={scale} />)}
+          </OrderGroup>
+        )}
+
+        {open && earlier.length > 0 && (
+          <OrderGroup label="Waiting on stock · earlier months" count={earlier.length}>
+            {earlier.map(r => <OrderRow key={r.key} r={r} tone="old" />)}
+          </OrderGroup>
+        )}
+
+        {(hidden > 0 || open) && (
+          <button
+            type="button"
+            className="rail-quiet bo-more"
+            aria-expanded={open}
+            onClick={() => setOpen(o => !o)}
+          >
+            {open ? 'Show fewer' : `Show all ${n0(rows.length)} orders`}
+          </button>
+        )}
+      </div>
     </Panel>
   );
 }

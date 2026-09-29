@@ -547,61 +547,71 @@ tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface-sub); }
 td.num, th.num { text-align: right; }
 
-/* Share bars - how the month splits
+/* Rings - how the month splits
    ------------------------------------------------------------------
-   A row per category, its count and share written out, and a bar scaled to
-   the whole month. One ink for every bar: length carries the value, so a
-   second colour would only be a code the reader has to learn. Other is the
-   remainder and is drawn quieter, the way the rings always meant it to be. */
-.share-list { display: flex; flex-direction: column; }
-.share-row { padding: 7px 0 9px; border-bottom: 1px solid var(--grid); }
-.share-row:last-child { border-bottom: none; }
-.share-line {
+   The chart area has a fixed height and the legend sits outside it, so a
+   ring with seven categories is exactly the size of a ring with four. The
+   middle is centred on the ring itself now that no legend shares its box. */
+.ring-chart { position: relative; height: 196px; }
+/* Dimming the other slices is how a ring answers "which one is this": the
+   pointer's slice keeps full strength and everything else steps back. */
+.ring-chart path { transition: fill-opacity var(--t-fast) var(--ease-out); }
+.ring-centre {
+  position: absolute;
+  inset: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-.share-name {
-  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: var(--fs-body);
-  color: var(--ink);
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
 }
-.share-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.share-figs {
-  flex: none;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: var(--fs-small);
-  color: var(--ink-muted);
+.ring-share {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ink);
   font-variant-numeric: lining-nums tabular-nums;
 }
-.share-figs b { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
-/* Wide enough for "100%", so the counts beside it line up down the column. */
-.share-figs span { min-width: 3.2ch; text-align: right; }
-.share-track { height: 4px; margin-top: 6px; background: var(--sunken); }
-.share-track > div {
-  height: 100%;
-  background: var(--viz-1);
-  transition: width var(--t-slow) var(--ease-out);
+/* Narrower than the hole, so "Deep Black Pearlescent" wraps inside the ring
+   instead of running across it. */
+.ring-name {
+  margin-top: 5px;
+  max-width: 96px;
+  font-size: var(--fs-small);
+  line-height: 1.25;
+  color: var(--ink-muted);
 }
-.share-row[data-other] .share-name { color: var(--ink-muted); }
-.share-row[data-other] .share-track > div { background: var(--ink-muted); }
-/* The paint itself. An inset hairline keeps Candy White visible on a white
-   sheet and Deep Black visible on the night one. */
-.share-swatch {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px var(--axis);
+.ring-legend { list-style: none; margin: 10px 0 0; padding: 0; }
+.ring-legend li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 3.4ch;
+  align-items: center;
+  column-gap: 9px;
+  padding: 5px 0;
+  border-top: 1px solid var(--grid);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  cursor: default;
+  transition: opacity var(--t-fast) var(--ease-out);
 }
-.share-swatch[data-empty] { background: transparent; }
-.share-empty { padding: 28px 0; font-size: var(--fs-body); color: var(--ink-muted); }
+.ring-legend li.is-dim { opacity: 0.45; }
+.ring-legend b {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.ring-pct { text-align: right; color: var(--ink-muted); font-variant-numeric: lining-nums tabular-nums; }
+.ring-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ring-swatch { width: 10px; height: 10px; border-radius: 50%; }
+/* Paint swatches carry an edge for the same reason the paint slices do. */
+.ring-swatch[data-outlined] { box-shadow: inset 0 0 0 1px var(--axis); }
+.ring-swatch.is-hatch {
+  background: repeating-linear-gradient(45deg,
+    var(--ink-muted) 0 1.6px, transparent 1.6px 4px);
+}
+.ring-empty { padding: 28px 0; font-size: var(--fs-body); color: var(--ink-muted); }
 
 /* Backorders worklist
    ------------------------------------------------------------------

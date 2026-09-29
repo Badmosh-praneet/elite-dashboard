@@ -49,9 +49,6 @@ function OrderedLegend({ items }) {
           <span style={{
             width: 9, height: 9, borderRadius: '50%',
             background: it.color, flexShrink: 0,
-            // A series that is not a plain fill - the pale commitment target -
-            // passes its own swatch so the key looks like the bar it names.
-            ...(it.swatch || {}),
           }} />
           {it.label}
         </li>
@@ -179,74 +176,9 @@ export function BookingPace({ orderbook = [], target = 0 }) {
   );
 }
 
-/* ---- 2. Commitment vs achievement: a target and what landed in it ---- */
+/* ---- 2. Commitment vs achievement, by window of the month ---- */
 
 const WINDOW_ORDER = ['TILL 12TH', '13 TO 19', '20 TO 26', '27 TO 31'];
-
-/* The pair on the People page share one height, so they sit level. They used
-   to be 300 and 340 - the commitments chart used the panel default and the
-   conversion chart set its own. */
-const PEOPLE_CHART_HEIGHT = 360;
-
-/* The hover card, as a plain box, for the two charts below that need to say
-   more than one series' value. Same look as Tip. */
-const TIP_BOX = {
-  background: 'var(--surface)', border: '1px solid var(--grid)',
-  padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-  boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
-  lineHeight: 1.7,
-};
-
-/* "TILL 12TH" -> "Till 12th", "13 TO 19" -> "13-19" with an en dash. The
-   workbook names its windows in capitals; everywhere else the sheet reads as
-   sentences. */
-const windowLabel = w => String(w || '')
-  .replace(/^TILL\s+/i, 'Till ')
-  .replace(/(\d+)\s+TO\s+(\d+)/i, '$1–$2')
-  .replace(/(\d+)(ST|ND|RD|TH)\b/i, (_, n, s) => n + s.toLowerCase());
-
-const ordinal = n => {
-  const v = n % 100;
-  if (v >= 11 && v <= 13) return `${n}th`;
-  return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] || 'th'}`;
-};
-
-/* Each window's label, then what it delivered against what it promised -
-   "24 of 36 · 67%" - so the comparison the bars make is also stated. */
-function WindowTick({ x, y, payload, rows }) {
-  const r = rows.find(d => d.window === payload.value);
-  const rate = r && r.Committed > 0 ? Math.round((100 * r.Achieved) / r.Committed) : null;
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <text textAnchor="middle" dy={14} style={{ fill: 'var(--ink-2)', fontSize: 'var(--fs-small)' }}>
-        {windowLabel(payload.value)}
-      </text>
-      {r && (
-        <text textAnchor="middle" dy={30}
-              style={{
-                fill: rate != null && rate >= 100 ? 'var(--good-text)' : 'var(--ink-muted)',
-                fontSize: 'var(--fs-small)',
-                fontVariantNumeric: 'lining-nums tabular-nums',
-              }}>
-          {n0(r.Achieved)} of {n0(r.Committed)}{rate != null ? ` · ${rate}%` : ''}
-        </text>
-      )}
-    </g>
-  );
-}
-
-function CommitmentTip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
-  const r = payload[0].payload;
-  const rate = r.Committed > 0 ? Math.round((100 * r.Achieved) / r.Committed) : null;
-  return (
-    <div style={TIP_BOX}>
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>{windowLabel(r.window)}</div>
-      <div>Committed <b>{n0(r.Committed)}</b></div>
-      <div>Achieved <b>{n0(r.Achieved)}</b>{rate != null ? ` · ${rate}%` : ''}</div>
-    </div>
-  );
-}
 
 export function Commitments({ commitments = [] }) {
   const byWindow = new Map();
@@ -262,59 +194,38 @@ export function Commitments({ commitments = [] }) {
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
 
-  const committed = data.reduce((a, d) => a + d.Committed, 0);
-  const achieved = data.reduce((a, d) => a + d.Achieved, 0);
-  /* The tracker is filled in by hand and August's stops at the 26th - the
-     final window was never entered. Said once, so three windows are not read
-     as the whole month. */
-  const last = data.length ? data[data.length - 1].window : null;
-  const partial = last && WINDOW_ORDER.indexOf(last) >= 0
-    && WINDOW_ORDER.indexOf(last) < WINDOW_ORDER.length - 1;
-  const endDay = partial ? Number((last.match(/(\d+)(?!.*\d)/) || [])[1]) : null;
-
-  const sub = !data.length ? 'Consultant booking commitments by window of the month'
-    : [
-      `${n0(achieved)} of ${n0(committed)} committed bookings achieved`
-        + (committed > 0 ? ` (${Math.round((100 * achieved) / committed)}%)` : ''),
-      endDay ? `tracker runs to the ${ordinal(endDay)}` : null,
-    ].filter(Boolean).join(' · ');
-
   return (
-    <Panel title="Commitment vs Achievement" sub={sub}
-           empty={!data.length} height={PEOPLE_CHART_HEIGHT}>
+    <Panel
+      title="Commitment vs Achievement"
+      sub="Consultant booking commitments by window of the month"
+      empty={!data.length}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        {/* A target and what landed in it. The commitment is a pale bar and the
-            achievement a narrower solid one drawn inside it, so a window that
-            fell short leaves its target showing above, and one that beat it
-            rises clear of the top. Two bars side by side asked the reader to
-            compare two heights; this asks them to look at one. It also retires
-            the red the achieved bars were drawn in, which made the window that
-            beat its commitment by a third look like the worst of the three.
-
-            Two x-axes on the same categories let the bars overlap rather than
-            sit beside each other; the second is only a scale and is hidden. */}
-        <BarChart data={data} margin={{ top: 12, right: 10, left: -18, bottom: 0 }}>
+        <BarChart data={data} margin={{ top: 16, right: 10, left: -20, bottom: 0 }}
+                  barGap={2} barSize={34}>
           <CartesianGrid {...GRID} />
-          <XAxis xAxisId="target" dataKey="window" hide />
-          <XAxis xAxisId="landed" dataKey="window" axisLine={false} tickLine={false}
-                 interval={0} height={46} tick={<WindowTick rows={data} />} />
-          {/* One gridline of headroom above the tallest bar, which otherwise sat
-              exactly on the top edge and read as clipped. */}
-          <YAxis axisLine={false} tickLine={false} tick={AXIS} allowDecimals={false}
-                 domain={[0, max => Math.max(10, Math.ceil(max / 10) * 10 + 10)]} tickCount={6} />
-          <RechartsTooltip content={<CommitmentTip />} cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
+          <XAxis dataKey="window" axisLine={false} tickLine={false} tick={AXIS} dy={8} />
+          <YAxis axisLine={false} tickLine={false} tick={AXIS} />
+          <RechartsTooltip content={props => <Tip {...props} />}
+                           cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
+          {/* Same reason as the ageing ramp: Recharts sorts the key
+              alphabetically, so it read "Achieved, Committed" while the bars
+              drew committed first. */}
           <Legend
             {...LEGEND}
             content={<OrderedLegend items={[
-              { label: 'Committed', swatch: { background: 'var(--sunken)', boxShadow: 'inset 0 0 0 1px var(--axis)' } },
-              { label: 'Achieved', color: 'var(--viz-1)' },
+              { label: 'Committed', color: 'var(--viz-1)' },
+              { label: 'Achieved', color: 'var(--viz-2)' },
             ]} />}
           />
-          <Bar xAxisId="target" dataKey="Committed" name="Committed" barSize={52}
-               fill="var(--sunken)" stroke="var(--axis)" strokeWidth={1}
-               radius={[3, 3, 0, 0]} />
-          <Bar xAxisId="landed" dataKey="Achieved" name="Achieved" barSize={24}
-               fill="var(--viz-1)" radius={[3, 3, 0, 0]} />
+          <Bar dataKey="Committed" fill="var(--viz-1)" radius={[3, 3, 0, 0]}>
+            <LabelList dataKey="Committed" position="top"
+                       style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }} />
+          </Bar>
+          <Bar dataKey="Achieved" fill="var(--viz-2)" radius={[3, 3, 0, 0]}>
+            <LabelList dataKey="Achieved" position="top"
+                       style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }} />
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </Panel>
@@ -561,97 +472,44 @@ export function Backorders({ backorders = [] }) {
 
 /* ---- 5. Consultant conversion ---- */
 
-/* The name, and under it how many leads the percentages are taken from. A
-   rate from eight leads and a rate from sixty look identical as bars; the
-   count is what tells them apart. */
-function ConsultantTick({ x, y, payload, rows }) {
-  const r = rows.find(d => d.consultant === payload.value);
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <text textAnchor="end" dx={-6} dy={-2} style={{ fill: 'var(--ink-2)', fontSize: 'var(--fs-small)' }}>
-        {payload.value}
-      </text>
-      {r && (
-        <text textAnchor="end" dx={-6} dy={12}
-              style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-micro)',
-                       fontVariantNumeric: 'lining-nums tabular-nums' }}>
-          {n0(r.leads)} {r.leads === 1 ? 'lead' : 'leads'}
-        </text>
-      )}
-    </g>
-  );
-}
-
-function ConversionTip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
-  const r = payload[0].payload;
-  return (
-    <div style={TIP_BOX}>
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>{r.consultant}</div>
-      <div>{n0(r.leads)} leads</div>
-      <div><b>{n0(r.bookings)}</b> booked &middot; {r['Booking %']}%</div>
-      <div><b>{n0(r.testDrives)}</b> test driven &middot; {r['Test drive %']}%</div>
-    </div>
-  );
-}
-
-const pctLabel = v => `${Math.round(Number(v) || 0)}%`;
-
 export function ConsultantConversion({ scorecards = [] }) {
   const data = scorecards
     .filter(s => s.row_kind === 'CONSULTANT' && num(s.total_leads) > 0)
     .map(s => ({
       consultant: s.consultant || '—',
-      leads: num(s.total_leads),
-      testDrives: num(s.td_achieved),
-      bookings: num(s.booking_achieved),
-      'Booking %': Number(num(s.booking_conv_pct).toFixed(1)),
       'Test drive %': Number(num(s.td_conv_pct).toFixed(1)),
+      'Booking %': Number(num(s.booking_conv_pct).toFixed(1)),
     }))
-    .sort((a, b) => b['Booking %'] - a['Booking %'] || b.leads - a.leads)
+    .sort((a, b) => b['Booking %'] - a['Booking %'])
     .slice(0, 9);
 
   return (
     <Panel
       title="Consultant Conversion"
-      sub="Share of each consultant's own leads that booked and that took a test drive, best booking rate first"
+      sub="Share of each consultant's own leads reaching test drive and booking"
       empty={!data.length}
-      height={PEOPLE_CHART_HEIGHT}
+      height={340}
     >
       <ResponsiveContainer width="100%" height="100%">
-        {/* Booking rate leads each pair and sets the order, so the chart reads
-            as one ranking. It used to be sorted by booking rate while the
-            longer test-drive bars, drawn first and darker, jumped about from
-            row to row - so a sorted chart looked unsorted. Test drive is now
-            the lighter, supporting tone, and every bar says its own value. */}
         <BarChart data={data} layout="vertical"
-                  margin={{ top: 4, right: 40, left: 4, bottom: 0 }}
-                  barGap={2} barSize={10}>
+                  margin={{ top: 4, right: 44, left: 4, bottom: 0 }}
+                  barGap={2} barSize={11}>
           <CartesianGrid stroke="var(--grid)" strokeWidth={1} horizontal={false} />
           <XAxis type="number" axisLine={false} tickLine={false} tick={AXIS}
                  tickFormatter={v => `${v}%`} />
-          <YAxis type="category" dataKey="consultant" width={122} axisLine={false}
-                 tickLine={false} interval={0} tick={<ConsultantTick rows={data} />} />
-          <RechartsTooltip content={<ConversionTip />} cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
+          <YAxis type="category" dataKey="consultant" width={128} axisLine={false}
+                 tickLine={false} tick={{ ...AXIS, fontSize: 'var(--fs-small)' }} interval={0} />
+          <RechartsTooltip content={props => <Tip {...props} suffix="%" />}
+                           cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
           <Legend
             {...LEGEND}
             content={<OrderedLegend items={[
-              { label: 'Booked', color: 'var(--viz-2)' },
-              { label: 'Test drive', color: 'var(--o3)' },
+              { label: 'Test drive %', color: 'var(--viz-1)' },
+              { label: 'Booking %', color: 'var(--viz-2)' },
             ]} />}
           />
-          {/* minPointSize gives a zero a sliver to stand on, so a consultant with
-              no bookings shows "0%" rather than a gap that reads as no data. */}
-          <Bar dataKey="Booking %" name="Booked" fill="var(--viz-2)" radius={[0, 3, 3, 0]}
-               minPointSize={2}>
-            <LabelList dataKey="Booking %" position="right" formatter={pctLabel}
-                       style={{ fill: 'var(--ink)', fontSize: 'var(--fs-micro)', fontWeight: 600 }} />
-          </Bar>
-          <Bar dataKey="Test drive %" name="Test drive" fill="var(--o3)" radius={[0, 3, 3, 0]}
-               minPointSize={2}>
-            <LabelList dataKey="Test drive %" position="right" formatter={pctLabel}
-                       style={{ fill: 'var(--ink-muted)', fontSize: 'var(--fs-micro)' }} />
-          </Bar>
+          <Bar dataKey="Test drive %" fill="var(--viz-1)" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="Booking %" fill="var(--viz-2)" radius={[0, 3, 3, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </Panel>

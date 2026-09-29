@@ -547,6 +547,79 @@ tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--surface-sub); }
 td.num, th.num { text-align: right; }
 
+/* Data quality
+   ------------------------------------------------------------------
+   The same instrument as the rest of the sheet: hairline rows, no boxes, and
+   colour only where it means something - here, in the severity marks, which
+   are drawn shapes as well so the level survives without the hue. */
+.dq-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 24px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.dq-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  font-variant-numeric: lining-nums tabular-nums;
+  padding-top: 3px;
+}
+.dq-summary-item { display: inline-flex; align-items: center; gap: 6px; text-transform: capitalize; }
+.dq-group + .dq-group { margin-top: 18px; }
+.dq-group-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--axis);
+}
+.dq-group-label > span:last-child { font-variant-numeric: lining-nums tabular-nums; }
+.dq-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--grid);
+}
+/* The mark sits level with the title's first line, not the top of the row. */
+.dq-row > svg { margin-top: 2px; }
+.dq-body { flex: 1; min-width: 0; }
+.dq-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dq-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+/* The size of the problem, in its own units, where the eye ends each line. */
+.dq-count {
+  flex: none;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: lining-nums tabular-nums;
+  white-space: nowrap;
+}
+.dq-detail {
+  margin-top: 3px;
+  max-width: 88ch;
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  color: var(--ink-muted);
+}
+.dq-more { margin-top: 14px; padding: 5px 12px; font-size: var(--fs-small); }
+.dq-clear { padding: 20px 0; font-size: var(--fs-body); color: var(--ink-muted); }
+
 /* Rings - how the month splits
    ------------------------------------------------------------------
    The chart area has a fixed height and the legend sits outside it, so a

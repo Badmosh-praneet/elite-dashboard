@@ -600,49 +600,112 @@ function SeverityMark({ severity }) {
   );
 }
 
-const SEVERITY_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
+const SEVERITIES = [
+  { key: 'high',   label: 'High priority' },
+  { key: 'medium', label: 'Medium priority' },
+  { key: 'low',    label: 'Low priority' },
+];
 
+/* "31 test drives", "1 consultant". The view says what each count is a count
+   of; it used to print "rows" for everything, which is a spreadsheet's word,
+   and "1 rows", which is nobody's. A count with no unit - the static fallback
+   predates the column - is a count of records. */
+function counted(n, unit) {
+  const noun = unit || 'record';
+  return `${n0(n)} ${n === 1 ? noun : `${noun}s`}`;
+}
+
+function IssueRow({ issue }) {
+  const n = Number(issue.affected_rows) || 0;
+  return (
+    <div className="dq-row">
+      <SeverityMark severity={issue.severity} />
+      <div className="dq-body">
+        <div className="dq-line">
+          <span className="dq-title">{issue.issue}</span>
+          <span className="dq-count">{counted(n, issue.unit)}</span>
+        </div>
+        <div className="dq-detail">{issue.detail}</div>
+      </div>
+    </div>
+  );
+}
+
+/* Where the workbook disagrees with itself.
+
+   It was a 340px box with its own scrollbar, holding eight issues that needed
+   nearer five hundred - so two or three were always out of sight, the only
+   low-priority one among them, and a reader who did not think to scroll inside
+   a panel never learned they existed. It now shows everything it holds or says
+   plainly what it is holding back. The high-priority issues are always open,
+   because they are the ones to act on; the rest sit behind one line that names
+   how many there are and of what kind, the same pattern as the backorders
+   worklist. The header counts every level, so the whole picture is on the
+   first screen whether or not anyone opens the rest. */
 export function DataQuality({ issues = [] }) {
-  const order = { high: 0, medium: 1, low: 2 };
-  const rows = [...issues].sort(
-    (a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3));
+  const [open, setOpen] = React.useState(false);
+
+  const known = new Set(SEVERITIES.map(s => s.key));
+  const rows = issues.map(i => ({ ...i, severity: known.has(i.severity) ? i.severity : 'low' }));
+  // Largest first within a level - the only order that needs no explaining.
+  const byLevel = SEVERITIES.map(s => ({
+    ...s,
+    items: rows.filter(r => r.severity === s.key)
+               .sort((a, b) => (Number(b.affected_rows) || 0) - (Number(a.affected_rows) || 0)),
+  })).filter(g => g.items.length);
+
+  const high = byLevel.filter(g => g.key === 'high');
+  const rest = byLevel.filter(g => g.key !== 'high');
+  const restCount = rest.reduce((a, g) => a + g.items.length, 0);
+  // With nothing urgent there is nothing to hold back: show the lot.
+  const showRest = open || !high.length;
 
   return (
-    <Panel
-      title="Data Quality"
-      sub="Where the workbook disagrees with itself, worst first"
-      empty={!rows.length}
-      height={340}
-    >
-      <div style={{ overflowY: 'auto', height: '100%', paddingRight: 4 }}>
-        {rows.map((r, i) => {
-          const sev = SEVERITY_LABEL[r.severity] ? r.severity : 'low';
-          return (
-            <div key={i} style={{
-              padding: '10px 0',
-              borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--grid)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
-                <SeverityMark severity={sev} />
-                <span style={{ fontSize: 'var(--fs-body)', fontWeight: 600, color: 'var(--ink)' }}>
-                  {r.issue}
-                </span>
-                <span style={{
-                  marginLeft: 'auto', fontSize: 'var(--fs-small)', color: 'var(--ink-muted)',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {SEVERITY_LABEL[sev]} · {n0(r.affected_rows)} rows
-                </span>
-              </div>
-              <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', lineHeight: 1.5,
-                            paddingLeft: 23 }}>
-                {r.detail}
-              </div>
-            </div>
-          );
-        })}
+    <div className="panel">
+      <div className="dq-head">
+        <div className="panel-header">
+          <h2>Data Quality</h2>
+          <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
+            Where the workbook disagrees with itself, most serious first
+          </span>
+        </div>
+        {byLevel.length > 0 && (
+          <div className="dq-summary" aria-label="Issues by priority">
+            {byLevel.map(g => (
+              <span key={g.key} className="dq-summary-item">
+                <SeverityMark severity={g.key} />
+                {n0(g.items.length)} {g.key}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-    </Panel>
+
+      {!byLevel.length ? (
+        <div className="dq-clear">The workbook agrees with itself - nothing to report.</div>
+      ) : (
+        <>
+          {[...high, ...(showRest ? rest : [])].map(g => (
+            <section key={g.key} className="dq-group">
+              <div className="dq-group-label">
+                <span>{g.label}</span>
+                <span>{n0(g.items.length)}</span>
+              </div>
+              {g.items.map(i => <IssueRow key={i.issue} issue={i} />)}
+            </section>
+          ))}
+
+          {high.length > 0 && restCount > 0 && (
+            <button type="button" className="rail-quiet dq-more"
+                    aria-expanded={open} onClick={() => setOpen(o => !o)}>
+              {open
+                ? 'Show high priority only'
+                : `Show ${n0(restCount)} more · ${rest.map(g => `${n0(g.items.length)} ${g.key}`).join(', ')}`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

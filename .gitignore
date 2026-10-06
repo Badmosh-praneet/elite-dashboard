@@ -33,3 +33,6 @@ dist/
 *.xlsx
 nodal-operand*.json
 tmp/
+
+# Local prototype data - the test drive board keeps its bookings here
+.local/

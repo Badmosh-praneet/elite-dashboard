@@ -19,6 +19,7 @@ import SalesTimeline from './components/SalesTimeline';
 import Trends from './components/Trends';
 import Composition from './components/Composition';
 import AgentCalls from './components/AgentCalls';
+import TestDriveBoard from './components/TestDriveBoard';
 import Visualizations from './components/Visualizations';
 import {
   BookingPace, Commitments, StockAgeing, Backorders,
@@ -57,6 +58,8 @@ const PAGES = [
   { id: 'people',    path: '/people',    label: 'People',    note: 'Consultants against their targets' },
   { id: 'inventory', path: '/inventory', label: 'Inventory', note: 'Stock by model, ageing, and orders awaiting a car' },
   { id: 'calls',     path: '/calls',     label: 'Calls',     note: 'What the agent handled on the phone' },
+  // Prototype: see app/test_drives.py.
+  { id: 'testdrives', path: '/test-drives', label: 'Test Drives', note: 'Test drives by car and time, with each day’s bookings and enquiries' },
 ];
 
 function Dashboard() {
@@ -70,6 +73,11 @@ function Dashboard() {
   // it is 'as of when?'. The footer answers with this.
   const [loadedAt, setLoadedAt] = useState(null);
   const [loaded, setLoaded] = useState(0);
+  // Counts the database's change signals (and Refresh clicks). The test drive
+  // board refetches on it directly, so a change reaches the calendar as soon
+  // as the signal does - not after the sixteen requests of a dashboard reload,
+  // and not at all only if that reload succeeds.
+  const [changeTick, setChangeTick] = useState(0);
 
   // UI States
   // The report sheet is the primary state: light reads as a printed document
@@ -160,7 +168,7 @@ function Dashboard() {
     loadData();
 
     const cleanup = setupLiveEvents(
-      () => loadData(true),
+      () => { setChangeTick(t => t + 1); loadData(true); },
       (state, text) => setLiveStatus({ state, text })
     );
 
@@ -223,6 +231,7 @@ function Dashboard() {
         onOpenExport={() => setExportModalOpen(true)}
         onRefresh={() => {
           addToast('Pulling the latest figures…');
+          setChangeTick(t => t + 1);
           loadData();
         }}
         isRefreshing={isRefreshing}
@@ -313,6 +322,11 @@ function Dashboard() {
         )}
 
         {activeTab === 'calls' && <AgentCalls />}
+        {/* changeTick moves on every change the database announces - an
+            agent's enquiry, a Record-drawer save, a workbook upload - and on
+            the 25-second heartbeat, so the board refetches its month and the
+            calendar keeps up with the database on its own. */}
+        {activeTab === 'testdrives' && <TestDriveBoard refreshKey={changeTick} />}
 
         {/* The record tables are a drill-down on whatever is on screen, so they
             follow the tab rather than living on one of them. */}

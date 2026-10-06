@@ -943,6 +943,8 @@ td.num, th.num { text-align: right; }
 .tdb-pill[data-status="attended"]  { color: var(--good-text); background: color-mix(in srgb, var(--good) 14%, var(--surface)); }
 .tdb-pill[data-status="no_show"]   { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
 .tdb-pill[data-status="cancelled"] { color: var(--ink-muted); background: var(--sunken); }
+/* Still owed a time: the follow-up's amber. */
+.tdb-pill[data-status="requested"] { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
 .tdb-hintchip {
   margin-left: 8px;
   padding: 1px 7px;
@@ -998,6 +1000,9 @@ td.num, th.num { text-align: right; }
 .tdb-address { flex: 1; min-width: 200px; }
 .tdb-fromcall { padding: 10px 12px; border-left: 3px solid var(--s1); background: var(--surface-sub); font-size: var(--fs-small); color: var(--ink-muted); line-height: 1.5; }
 .tdb-fromcall b { color: var(--ink-2); }
+/* The agent's own words, kept as written. */
+.tdb-notetext { white-space: pre-wrap; color: var(--ink-2); line-height: 1.5; }
+.tdb-h3-gap { margin-top: 26px; }
 .tdb-error { padding: 9px 12px; border-left: 3px solid var(--critical); background: color-mix(in srgb, var(--critical) 8%, var(--surface)); font-size: var(--fs-small); color: var(--ink); white-space: pre-line; }
 .tdb-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .tdb-detail dl { display: grid; grid-template-columns: 96px 1fr; gap: 7px 12px; margin: 0; font-size: var(--fs-body); }

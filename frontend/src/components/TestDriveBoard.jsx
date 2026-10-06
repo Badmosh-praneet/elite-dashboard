@@ -41,6 +41,7 @@ const STATUS = {
   attended:  { label: 'Attended' },
   no_show:   { label: 'No-show' },
   cancelled: { label: 'Cancelled' },
+  requested: { label: 'Requested' },
 };
 
 /* The agent says "for Friday", not a date. Turn the first weekday it names
@@ -89,10 +90,24 @@ function BookingForm({ setup, bookings, draft, onCancel, onSaved }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => { setForm(draft); setError(null); }, [draft]);
 
+  // That day's drives, fetched for the day chosen, so a slot taken on a day
+  // outside the month on screen is not offered as free.
+  const [dayDrives, setDayDrives] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    setDayDrives(null);
+    if (!form.date) return undefined;
+    api(`${BASE}?start=${form.date}&days=1`)
+      .then(r => { if (!dead) setDayDrives(r.bookings || []); })
+      .catch(() => { if (!dead) setDayDrives(null); });
+    return () => { dead = true; };
+  }, [form.date]);
+
   // Only the slots still free on that car that day are offered.
-  const taken = useMemo(() => new Set(bookings
-    .filter(b => b.car_id === form.car_id && b.date === form.date && b.status !== 'cancelled')
-    .map(b => b.start)), [bookings, form.car_id, form.date]);
+  const taken = useMemo(() => new Set((dayDrives || bookings)
+    .filter(b => b.car_id === form.car_id && b.date === form.date && b.start
+                 && b.status !== 'cancelled' && b.id !== form.request_id)
+    .map(b => b.start)), [dayDrives, bookings, form.car_id, form.date, form.request_id]);
   const free = setup.slots.filter(s => !taken.has(s));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -107,6 +122,7 @@ function BookingForm({ setup, bookings, draft, onCancel, onSaved }) {
         address: form.location === 'Home' ? form.address.trim() : '',
         source: form.source, call_id: form.call_id || null,
         enquiry_id: form.enquiry_id || null,
+        request_id: form.request_id || null,
       });
       onSaved(row);
     } catch (err) {
@@ -123,6 +139,14 @@ function BookingForm({ setup, bookings, draft, onCancel, onSaved }) {
           <b>From a call on {fmt(form.fromCall.called_at.slice(0, 10), { day: 'numeric', month: 'short' })}</b>
           {form.fromCall.when_hint ? <> &middot; the agent noted &ldquo;{form.fromCall.when_hint}&rdquo;</> : null}
           <div>{form.fromCall.summary}</div>
+        </div>
+      )}
+      {form.fromRequest && (
+        <div className="tdb-fromcall">
+          <b>Requested{form.fromRequest.source === 'AI agent' ? ' through the AI agent' : ''}
+            {' '}on {fmt(form.fromRequest.created_at.slice(0, 10), { day: 'numeric', month: 'short' })}</b>
+          {form.fromRequest.asked_time ? <> &middot; asked for {form.fromRequest.asked_time}</> : null}
+          {form.fromRequest.note && <div>{form.fromRequest.note}</div>}
         </div>
       )}
       {form.fromEnquiry && (
@@ -193,9 +217,13 @@ function BookingForm({ setup, bookings, draft, onCancel, onSaved }) {
   );
 }
 
-function BookingDetail({ booking, car, onClose, onChanged }) {
+/* A test drive's details, with everything the agent noted. A request - filed
+   by the database from an enquiry that did not say enough, or asked for a slot
+   already taken - is scheduled from here. */
+function BookingDetail({ booking, car, onClose, onChanged, onSchedule }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
+  const requested = booking.status === 'requested';
   const change = async status => {
     setBusy(status); setError(null);
     try {
@@ -207,34 +235,52 @@ function BookingDetail({ booking, car, onClose, onChanged }) {
       setBusy(null);
     }
   };
+  const when = requested
+    ? `${booking.date ? dayLong(booking.date) : 'Day to confirm'} · ${booking.asked_time ? `asked for ${booking.asked_time}` : 'time to confirm'}`
+    : `${dayLong(booking.date)} · ${booking.start}`;
+  const from = booking.call_id ? ' · from a call' : booking.enquiry_id ? ' · from an enquiry' : '';
   return (
     <div className="tdb-detail">
       <dl>
-        <dt>When</dt><dd>{dayLong(booking.date)} &middot; {booking.start}</dd>
-        <dt>Car</dt><dd>{car ? car.name : booking.car_id}</dd>
+        <dt>When</dt><dd>{when}</dd>
+        <dt>Car</dt><dd>{car ? car.name : 'Model not recorded'}</dd>
         <dt>Customer</dt><dd>{booking.customer}{booking.phone ? ` · ${booking.phone}` : ''}</dd>
         <dt>Where</dt><dd>{booking.location === 'Home' ? `At home${booking.address ? `: ${booking.address}` : ''}` : 'Showroom'}</dd>
         <dt>Executive</dt><dd>{booking.consultant || 'Not assigned'}</dd>
-        <dt>Booked by</dt><dd>{booking.source}{booking.call_id ? ' · from a call' : ''}</dd>
+        <dt>Booked by</dt><dd>{booking.source}{from}</dd>
+        {booking.note && (
+          <><dt>{booking.source === 'AI agent' ? 'Agent’s note' : 'Note'}</dt><dd className="tdb-notetext">{booking.note}</dd></>
+        )}
         <dt>Status</dt><dd><span className="tdb-pill" data-status={booking.status}>{STATUS[booking.status]?.label}</span></dd>
       </dl>
       {error && <div className="tdb-error" role="alert">{error}</div>}
       <div className="tdb-actions">
-        {booking.status !== 'cancelled' && (
-          <button type="button" className="rail-quiet" disabled={!!busy} onClick={() => change('cancelled')}>
-            {busy === 'cancelled' ? 'Cancelling…' : 'Cancel booking'}
-          </button>
-        )}
-        {booking.status !== 'no_show' && booking.status !== 'cancelled' && (
-          <button type="button" disabled={!!busy} onClick={() => change('no_show')}>No-show</button>
-        )}
-        {booking.status !== 'attended' && booking.status !== 'cancelled' && (
-          <button type="button" className="primary" disabled={!!busy} onClick={() => change('attended')}>
-            Mark attended
-          </button>
-        )}
-        {booking.status !== 'booked' && (
-          <button type="button" disabled={!!busy} onClick={() => change('booked')}>Back to booked</button>
+        {requested ? (
+          <>
+            <button type="button" className="rail-quiet" disabled={!!busy} onClick={() => change('cancelled')}>
+              {busy === 'cancelled' ? 'Cancelling…' : 'Cancel request'}
+            </button>
+            <button type="button" className="primary" onClick={() => onSchedule(booking)}>Schedule</button>
+          </>
+        ) : (
+          <>
+            {booking.status !== 'cancelled' && (
+              <button type="button" className="rail-quiet" disabled={!!busy} onClick={() => change('cancelled')}>
+                {busy === 'cancelled' ? 'Cancelling…' : 'Cancel booking'}
+              </button>
+            )}
+            {booking.status !== 'no_show' && booking.status !== 'cancelled' && (
+              <button type="button" disabled={!!busy} onClick={() => change('no_show')}>No-show</button>
+            )}
+            {booking.status !== 'attended' && booking.status !== 'cancelled' && (
+              <button type="button" className="primary" disabled={!!busy} onClick={() => change('attended')}>
+                Mark attended
+              </button>
+            )}
+            {booking.status !== 'booked' && (
+              <button type="button" disabled={!!busy} onClick={() => change('booked')}>Back to booked</button>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -311,9 +357,14 @@ const entrySub = (kind, item) => {
     return `Booking · ${(BOOKING_STATUS[item.status] || { label: item.status || 'status not recorded' }).label}`;
   }
   if (kind === 'drives') return `Test drive · ${item.status || 'recorded'}`;
+  if (kind === 'requests') return `Requested · ${item.asked_time ? `asked ${item.asked_time}` : 'time to confirm'}`;
   // An enquiry says where it stands with its test drive, if it has or wants one.
   const td = item.test_drive;
-  if (item.follow_up) return td ? 'Follow up · no-show' : 'Follow up · test drive';
+  if (item.follow_up) {
+    return !td ? 'Follow up · test drive'
+      : td.status === 'requested' ? 'Follow up · time to confirm' : 'Follow up · no-show';
+  }
+  if (td && td.status === 'requested') return 'Test drive requested';
   if (td) {
     return td.status === 'attended' ? 'Test drive attended'
       : td.status === 'no_show' ? 'Test drive · no-show' : `Test drive · ${shortDate(td.date)}`;
@@ -324,9 +375,10 @@ const entrySub = (kind, item) => {
 function EntryBlock({ kind, item, onOpen }) {
   const who = nameLabel(item.name || item.customer);
   const sub = entrySub(kind, item);
-  const state = item.follow_up ? 'is-follow' : item.test_drive ? 'is-linked' : '';
+  // A request is a test drive still owed a time: the drive's colour, the follow-up's amber.
+  const state = kind === 'requests' || item.follow_up ? 'is-follow' : item.test_drive ? 'is-linked' : '';
   return (
-    <button type="button" className={`tdb-entry ${state}`} data-kind={kind}
+    <button type="button" className={`tdb-entry ${state}`} data-kind={kind === 'requests' ? 'drives' : kind}
             onClick={() => onOpen({ kind, item })} title={`${who} · ${sub}`}>
       <b>{who}</b>
       <span>{sub}</span>
@@ -338,8 +390,13 @@ function EntryBlock({ kind, item, onOpen }) {
 function EnquiryState({ item }) {
   const td = item.test_drive;
   if (item.follow_up) {
-    return <span className="tdb-pill" data-status="no_show">{td ? 'Follow up · no-show' : 'Follow up'}</span>;
+    return (
+      <span className="tdb-pill" data-status="no_show">
+        {!td ? 'Follow up' : td.status === 'requested' ? 'Follow up · time to confirm' : 'Follow up · no-show'}
+      </span>
+    );
   }
+  if (td && td.status === 'requested') return <span className="tdb-pill" data-status="requested">Test drive requested</span>;
   if (!td) return null;
   return (
     <span className="tdb-pill" data-status={td.status}>
@@ -353,7 +410,7 @@ const RECORD_TITLE = { bookings: 'Booking', drives: 'Recorded test drive', enqui
 
 /* What the CRM holds on one booking, enquiry or recorded drive. Read-only: the
    board never writes to the CRM. An enquiry can be turned into a test drive. */
-function RecordDetail({ record, onBook, onOpenDrive }) {
+function RecordDetail({ record, onBook, onOpenDrive, onScheduleRequest }) {
   const { kind, item } = record;
   const st = BOOKING_STATUS[item.status] || { label: item.status || 'Not recorded', tint: 'var(--ink-muted)' };
   const rows = [
@@ -367,7 +424,9 @@ function RecordDetail({ record, onBook, onOpenDrive }) {
   if (kind === 'enquiries') {
     const td = item.test_drive;
     rows.push(['Test drive', td
-      ? `${dayLong(td.date)} · ${td.start} · ${STATUS[td.status]?.label || td.status}`
+      ? (td.status === 'requested'
+        ? `Requested${td.date ? ` for ${dayLong(td.date)}` : ''}${td.asked_time ? ` · asked ${td.asked_time}` : ''} · time to confirm`
+        : `${dayLong(td.date)} · ${td.start} · ${STATUS[td.status]?.label || td.status}`)
       : item.wants_test_drive ? 'Asked for, not booked yet' : 'None booked']);
   }
   if (kind === 'bookings') rows.push(['Booking amount', item.amount ? money(item.amount) : 'Not recorded']);
@@ -393,8 +452,10 @@ function RecordDetail({ record, onBook, onOpenDrive }) {
             <button type="button" onClick={() => onOpenDrive(item.test_drive)}>Open test drive</button>
           )}
           {(!item.test_drive || item.follow_up) && (
-            <button type="button" className="primary" onClick={() => onBook(item)}>
-              {item.test_drive ? 'Book again' : 'Book a test drive'}
+            <button type="button" className="primary"
+                    onClick={() => (item.test_drive?.status === 'requested'
+                      ? onScheduleRequest(item.test_drive) : onBook(item))}>
+              {!item.test_drive ? 'Book a test drive' : item.test_drive.status === 'no_show' ? 'Book again' : 'Schedule'}
             </button>
           )}
         </div>
@@ -457,10 +518,11 @@ function SearchBox({ setup, onPick }) {
   }, [open]);
 
   const carName = id => setup.cars.find(c => c.id === id)?.name;
-  const meta = ({ kind, item }) => [
+  const meta = ({ kind, item, date }) => [
     RESULT_KIND[kind],
     kind === 'local' ? carName(item.car_id) : (item.model ? modelLabel(item.model) : null),
-    fmt(item.date, { day: 'numeric', month: 'short', year: 'numeric' }) + (kind === 'local' ? ` · ${item.start}` : ''),
+    fmt(date || item.date, { day: 'numeric', month: 'short', year: 'numeric' })
+      + (kind === 'local' ? (item.start ? ` · ${item.start}` : ' · requested') : ''),
   ].filter(Boolean).join(' · ');
   const choose = r => { setOpen(false); onPick(r); };
   const onKey = e => {
@@ -507,7 +569,7 @@ function WeekView({ setup, day, vis, carOf, onDay, onJump }) {
   const cell = {};
   const add = (car, d, k) => { const key = `${car}|${d}`; cell[key] = cell[key] || { ...NONE }; cell[key][k] += 1; };
   vis.bookings.filter(x => inWeek(x.date)).forEach(x => add(carOf(x), x.date, 'bookings'));
-  [...vis.timed, ...vis.recorded].filter(x => inWeek(x.date)).forEach(x => add(carOf(x), x.date, 'drives'));
+  [...vis.timed, ...vis.recorded, ...vis.requests].filter(x => inWeek(x.date)).forEach(x => add(carOf(x), x.date, 'drives'));
   vis.enquiries.filter(x => inWeek(x.date)).forEach(x => {
     add(carOf(x), x.date, 'enquiries');
     if (x.follow_up) add(carOf(x), x.date, 'follow');
@@ -592,7 +654,10 @@ function WeekView({ setup, day, vis, carOf, onDay, onJump }) {
 function Board({ setup, bookings, recorded, activity, month, setMonth, day, setDay, onSlot, onOpen,
                  onOpenRecord, onPick, view, setView, hidden, setHidden, exec, setExec, loading, loadError }) {
   const strip = useMemo(() => Array.from({ length: daysIn(month) }, (_, i) => isoAdd(month, i)), [month]);
-  const live = bookings.filter(b => b.status !== 'cancelled');
+  // In a slot: booked, done or missed. A request holds no slot; one that names
+  // its day sits in the car's All day lane until someone gives it a time.
+  const live = bookings.filter(b => b.status !== 'cancelled' && b.status !== 'requested');
+  const asked = bookings.filter(b => b.status === 'requested' && b.date);
   const past = day < setup.today;
   const isThisMonth = month === monthOf(setup.today);
   const [expanded, setExpanded] = useState(null);     // the day whose enquiries are all listed
@@ -606,7 +671,8 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   const pass = (kind, x) => !hidden.includes(kind) && execOk(x);
   const vis = {
     bookings: activity.bookings.filter(x => pass('bookings', x)),
-    timed: live.filter(x => pass('drives', x)),             // booked here, in slots
+    timed: live.filter(x => pass('drives', x)),             // booked, in slots
+    requests: asked.filter(x => pass('drives', x)),         // still owed a time
     recorded: recorded.filter(x => pass('drives', x)),      // the CRM's, all day
     enquiries: activity.enquiries.filter(x => pass('enquiries', x)),
   };
@@ -617,6 +683,7 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   vis.bookings.forEach(x => add(x.date, 'bookings'));
   vis.timed.forEach(x => add(x.date, 'drives'));
   vis.recorded.forEach(x => add(x.date, 'drives'));
+  vis.requests.forEach(x => add(x.date, 'drives'));
   vis.enquiries.forEach(x => { add(x.date, 'enquiries'); if (x.follow_up) add(x.date, 'follow'); });
   const dayT = tally[day] || NONE;
 
@@ -625,11 +692,11 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   const inMonth = x => x.date >= month && x.date < addMonths(month, 1);
   const monthTotals = {
     bookings: activity.bookings.filter(x => inMonth(x) && execOk(x)).length,
-    drives: [...live, ...recorded].filter(x => inMonth(x) && execOk(x)).length,
+    drives: [...live, ...asked, ...recorded].filter(x => inMonth(x) && execOk(x)).length,
     enquiries: activity.enquiries.filter(x => inMonth(x) && execOk(x)).length,
     follow: activity.enquiries.filter(x => inMonth(x) && execOk(x) && x.follow_up).length,
   };
-  const everything = [...activity.bookings, ...live, ...recorded, ...activity.enquiries];
+  const everything = [...activity.bookings, ...live, ...asked, ...recorded, ...activity.enquiries];
   const execs = [...new Set(everything.map(x => x.consultant).filter(Boolean).concat(exec ? [exec] : []))].sort();
   const noExec = exec ? everything.filter(x => inMonth(x) && !x.consultant).length : 0;
   const filtered = hidden.length > 0 || !!exec;
@@ -639,6 +706,7 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   const shownTimed = new Set(vis.timed.map(b => b.id));
   const timedOnDay = vis.timed.filter(b => b.date === day).sort((a, b) => a.start.localeCompare(b.start));
   const recOnDay = vis.recorded.filter(r => r.date === day);
+  const reqOnDay = vis.requests.filter(r => r.date === day);
   const enqOnDay = vis.enquiries.filter(e => e.date === day);
   const bkOnDay = vis.bookings.filter(b => b.date === day);
   const at = (carId, slot) => onDayAll.find(b => b.car_id === carId && b.start === slot);
@@ -653,6 +721,7 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   const laneFor = carId => [
     ...bkOnDay.filter(b => carOf(b) === carId).map(item => ({ kind: 'bookings', item })),
     ...recOnDay.filter(r => carOf(r) === carId).map(item => ({ kind: 'drives', item })),
+    ...reqOnDay.filter(r => carOf(r) === carId).map(item => ({ kind: 'requests', item })),
     ...enqOnDay.filter(e => carOf(e) === carId).map(item => ({ kind: 'enquiries', item })),
   ];
   const unplaced = laneFor(null);
@@ -705,15 +774,16 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   const noShows = timedOnDay.filter(b => b.status === 'no_show').length;
 
   const shownEnq = expanded === day ? enqOnDay : enqOnDay.slice(0, ENQUIRY_ROWS);
-  const nothing = !enqOnDay.length && !timedOnDay.length && !recOnDay.length && !bkOnDay.length;
-  const anything = onDayAll.length || recorded.some(r => r.date === day)
+  const nothing = !enqOnDay.length && !timedOnDay.length && !recOnDay.length && !bkOnDay.length && !reqOnDay.length;
+  const anything = onDayAll.length || asked.some(r => r.date === day) || recorded.some(r => r.date === day)
     || activity.enquiries.some(e => e.date === day) || activity.bookings.some(b => b.date === day);
   const lane = entries => (
     <div className="tdb-lane">
       <div className="tdb-lane-in">
         <span className="tdb-lane-tag">All day</span>
         {entries.map(({ kind, item }) => (
-          <EntryBlock key={item.id} kind={kind} item={item} onOpen={onOpenRecord} />
+          <EntryBlock key={item.id} kind={kind} item={item}
+                      onOpen={kind === 'requests' ? () => onOpen(item) : onOpenRecord} />
         ))}
       </div>
     </div>
@@ -873,7 +943,7 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
               {past
                 ? 'This day has passed, so its slots cannot be booked.'
                 : `Click an empty slot to book. ${setup.slot_minutes}-minute slots, ${setup.slots[0]} to 19:00.`}
-              {enqOnDay.length + bkOnDay.length + recOnDay.length > 0
+              {enqOnDay.length + bkOnDay.length + recOnDay.length + reqOnDay.length > 0
                 && ' Bookings, enquiries and recorded drives carry a date but no time, so they sit in their car’s All day lane. Click one for its details.'}
             </span>
           </div>
@@ -913,9 +983,9 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
                 </section>
               )}
 
-              {(timedOnDay.length > 0 || recOnDay.length > 0) && (
+              {(timedOnDay.length > 0 || recOnDay.length > 0 || reqOnDay.length > 0) && (
                 <section className="tdb-group" aria-label="Test drives">
-                  <h4 className="tdb-h4"><i className="tdb-dot" data-kind="drives" />Test drives <span>{timedOnDay.length + recOnDay.length}</span></h4>
+                  <h4 className="tdb-h4"><i className="tdb-dot" data-kind="drives" />Test drives <span>{timedOnDay.length + recOnDay.length + reqOnDay.length}</span></h4>
                   <div className="tdb-agenda">
                     {timedOnDay.map(b => (
                       <div key={b.id} className="tdb-row">
@@ -931,6 +1001,22 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
                         </div>
                         <span className="tdb-pill" data-status={b.status}>{STATUS[b.status].label}</span>
                         <button type="button" className="rail-quiet" onClick={() => onOpen(b)}>Open</button>
+                      </div>
+                    ))}
+                    {/* Requests the database filed from an enquiry: a day, but no slot yet. */}
+                    {reqOnDay.map(r => (
+                      <div key={r.id} className="tdb-row tdb-rec">
+                        <span className="tdb-at" title="No slot yet">{r.asked_time || '—'}</span>
+                        <div className="tdb-who">
+                          <div><b>{r.customer}</b>{carById(r.car_id) ? ` · ${carById(r.car_id).name}` : ''}</div>
+                          <div className="tdb-meta">
+                            {[r.location === 'Home' ? `Home${r.address ? `: ${r.address}` : ''}` : 'Showroom',
+                              r.phone, r.source, r.asked_time ? `asked for ${r.asked_time}` : 'time to confirm']
+                              .filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                        <span className="tdb-pill" data-status="no_show">Requested</span>
+                        <button type="button" className="rail-quiet" onClick={() => onOpen(r)}>Open</button>
                       </div>
                     ))}
                     {/* Drives in the CRM's own record. They have a day but no time, so
@@ -989,33 +1075,66 @@ function Board({ setup, bookings, recorded, activity, month, setMonth, day, setD
   );
 }
 
-function Requests({ setup, requests, unavailable, onSchedule }) {
-  if (unavailable) return <div className="tdb-empty-day">The call log cannot be read here: {unavailable}</div>;
-  if (!requests.length) return <div className="tdb-empty-day">No unscheduled test-drive requests in the call log.</div>;
+function Requests({ setup, requests, waiting, unavailable, onSchedule, onScheduleRequest, onOpenDrive }) {
   const carName = id => setup.cars.find(c => c.id === id)?.name;
   return (
     <>
+      <h3 className="tdb-h3">Waiting for a time &middot; {waiting.length}</h3>
       <p className="tdb-lede">
-        Test drives the AI agent offered or promised on a call that nobody has put on the board yet.
-        Read live from the call log; the car is the one the caller asked about.
+        Test drives filed automatically from enquiries whose note did not say when - or asked for a
+        slot already taken. Every one is already in the database; schedule it to give it a slot.
       </p>
-      <div className="tdb-agenda">
-        {requests.map(r => (
-          <div key={r.call_id} className="tdb-row tdb-req">
-            <span className="tdb-at">{fmt((r.called_at || '').slice(0, 10), { day: 'numeric', month: 'short' })}</span>
-            <div className="tdb-who">
-              <div>
-                <b>{r.name || 'Unknown caller'}</b>
-                {r.phone ? ` · ${r.phone}` : ''}
-                {carName(r.car_id) ? ` · ${carName(r.car_id)}` : ' · car not named'}
-                {r.when_hint ? <span className="tdb-hintchip">asked for {r.when_hint}</span> : null}
+      {waiting.length ? (
+        <div className="tdb-agenda">
+          {waiting.map(d => (
+            <div key={d.id} className="tdb-row tdb-req">
+              <span className="tdb-at">{fmt(d.created_at.slice(0, 10), { day: 'numeric', month: 'short' })}</span>
+              <div className="tdb-who">
+                <div>
+                  <b>{d.customer}</b>
+                  {d.phone ? ` · ${d.phone}` : ''}
+                  {carName(d.car_id) ? ` · ${carName(d.car_id)}` : ' · car not named'}
+                  {(d.date || d.asked_time) && (
+                    <span className="tdb-hintchip">
+                      asked for {[d.date && fmt(d.date, { weekday: 'short', day: 'numeric', month: 'short' }), d.asked_time].filter(Boolean).join(' ')}
+                    </span>
+                  )}
+                </div>
+                {d.note && <div className="tdb-meta tdb-summary">{d.note}</div>}
               </div>
-              <div className="tdb-meta tdb-summary">{r.summary}</div>
+              <button type="button" className="rail-quiet" onClick={() => onOpenDrive(d)}>Open</button>
+              <button type="button" className="primary" onClick={() => onScheduleRequest(d)}>Schedule</button>
             </div>
-            <button type="button" className="primary" onClick={() => onSchedule(r)}>Schedule</button>
+          ))}
+        </div>
+      ) : <div className="tdb-empty-day">Nothing waiting: every test-drive enquiry has its slot.</div>}
+
+      <h3 className="tdb-h3 tdb-h3-gap">From the call log &middot; {requests.length}</h3>
+      <p className="tdb-lede">
+        Calls where the AI agent offered or promised a test drive but no enquiry or drive was saved for
+        the caller. Read live from the call log; the car is the one the caller asked about.
+      </p>
+      {unavailable ? <div className="tdb-empty-day">The call log cannot be read here: {unavailable}</div>
+        : !requests.length ? <div className="tdb-empty-day">Every test drive promised on a call is on record.</div>
+        : (
+          <div className="tdb-agenda">
+            {requests.map(r => (
+              <div key={r.call_id} className="tdb-row tdb-req">
+                <span className="tdb-at">{fmt((r.called_at || '').slice(0, 10), { day: 'numeric', month: 'short' })}</span>
+                <div className="tdb-who">
+                  <div>
+                    <b>{r.name || 'Unknown caller'}</b>
+                    {r.phone ? ` · ${r.phone}` : ''}
+                    {carName(r.car_id) ? ` · ${carName(r.car_id)}` : ' · car not named'}
+                    {r.when_hint ? <span className="tdb-hintchip">asked for {r.when_hint}</span> : null}
+                  </div>
+                  <div className="tdb-meta tdb-summary">{r.summary}</div>
+                </div>
+                <button type="button" className="primary" onClick={() => onSchedule(r)}>Schedule</button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        )}
     </>
   );
 }
@@ -1075,7 +1194,7 @@ export default function TestDriveBoard({ refreshKey }) {
   const [bookings, setBookings] = useState([]);
   const [recorded, setRecorded] = useState([]);
   const [activity, setActivity] = useState({ bookings: [], enquiries: [] });   // the CRM's, read-only
-  const [requests, setRequests] = useState({ requests: [], unavailable: null });
+  const [requests, setRequests] = useState({ requests: [], waiting: [], unavailable: null });
   const [tab, setTab] = useState('board');
   const [month, setMonth] = useState(null);
   const [day, setDay] = useState(null);
@@ -1094,8 +1213,18 @@ export default function TestDriveBoard({ refreshKey }) {
   /* The request queue reads the live call log, which takes seconds, so it
      loads on its own and never holds up the board. */
   const refreshRequests = useCallback(() => api(`${BASE}/requests`)
-    .then(r => setRequests({ requests: r.requests || [], unavailable: r.unavailable || null }))
-    .catch(e => setRequests({ requests: [], unavailable: e.message })), []);
+    .then(r => setRequests({ requests: r.requests || [], waiting: r.waiting || [], unavailable: r.unavailable || null }))
+    .catch(e => setRequests({ requests: [], waiting: [], unavailable: e.message })), []);
+  // The waiting list is a quick read, so it follows every change the database
+  // announces - a request the agent's enquiry filed appears without a reload.
+  // The call log stays on its own, slower refresh above.
+  useEffect(() => {
+    let dead = false;
+    api(`${BASE}/requests?calls=false`)
+      .then(r => { if (!dead) setRequests(q => ({ ...q, waiting: r.waiting || [] })); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [refreshKey]);
 
   useEffect(() => {
     api(`${BASE}/setup`)
@@ -1141,7 +1270,8 @@ export default function TestDriveBoard({ refreshKey }) {
   if (!setup || !day || !month) return <div className="panel"><div className="tdb-empty-day">Opening the board…</div></div>;
 
   const blank = { customer: '', phone: '', consultant: '', location: 'Showroom', address: '', source: 'Staff',
-                  call_id: null, fromCall: null, enquiry_id: null, fromEnquiry: null };
+                  call_id: null, fromCall: null, enquiry_id: null, fromEnquiry: null,
+                  request_id: null, fromRequest: null };
   const firstFree = (carId, date) => setup.slots.find(s => !bookings.some(b =>
     b.car_id === carId && b.date === date && b.start === s && b.status !== 'cancelled')) || '';
 
@@ -1178,12 +1308,26 @@ export default function TestDriveBoard({ refreshKey }) {
                enquiry_id: e.id, fromEnquiry: e });
   };
   // A search result: its day, in the day view, with the record open on it.
-  const pick = ({ kind, item }) => {
-    if (monthOf(item.date) !== month) setMonth(monthOf(item.date));
-    setDay(item.date); setTab('board'); setView('day');
+  const pick = ({ kind, item, date }) => {
+    const on = date || item.date;
+    if (monthOf(on) !== month) setMonth(monthOf(on));
+    setDay(on); setTab('board'); setView('day');
     if (kind === 'local') setOpened(item); else setRecord({ kind, item });
   };
   const openDrive = td => { setRecord(null); setOpened(td); };
+  // A request becomes a booking: its car and day, the time the customer asked
+  // for if that slot is free, and every detail the agent noted.
+  const scheduleRequest = d => {
+    const carId = setup.cars.some(c => c.id === d.car_id) ? d.car_id : setup.cars[0].id;
+    const date = d.date && d.date >= setup.today ? d.date : (day >= setup.today ? day : setup.today);
+    const askedFree = d.asked_time && setup.slots.includes(d.asked_time) && !bookings.some(b =>
+      b.car_id === carId && b.date === date && b.start === d.asked_time && b.status !== 'cancelled');
+    setOpened(null); setRecord(null); setTab('board');
+    setDraft({ ...blank, car_id: carId, date, start: askedFree ? d.asked_time : firstFree(carId, date),
+               customer: d.customer, phone: d.phone || '', consultant: d.consultant || '',
+               location: d.location || 'Showroom', address: d.address || '', source: d.source || 'Staff',
+               call_id: d.call_id, enquiry_id: d.enquiry_id, request_id: d.id, fromRequest: d });
+  };
   if (record) lastRecord.current = record;
   const shown = record || lastRecord.current;
 
@@ -1192,14 +1336,14 @@ export default function TestDriveBoard({ refreshKey }) {
       <div className="tdb-top">
         <div className="tdb-eyebrow">Elite VW, Bengaluru &middot; Sales</div>
         <div className="tdb-tabs" role="tablist" aria-label="Test drive views">
-          {[['board', 'Board'], ['requests', `Agent requests${requests.requests.length ? ` · ${requests.requests.length}` : ''}`], ['fleet', 'Cars and team']].map(([k, label]) => (
+          {[['board', 'Board'], ['requests', `Agent requests${requests.requests.length + requests.waiting.length ? ` · ${requests.requests.length + requests.waiting.length}` : ''}`], ['fleet', 'Cars and team']].map(([k, label]) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k}
                     className={tab === k ? 'is-on' : ''} onClick={() => setTab(k)}>{label}</button>
           ))}
         </div>
       </div>
       <div className="tdb-note">
-        Prototype &middot; test drives booked here are saved on the server, not in the CRM, and may be cleared when the dashboard is redeployed &middot; enquiries, bookings and recorded drives are read live from the CRM &middot; one demo car per model is assumed
+        Test drives are kept in the CRM database &middot; the ones customers agree with the AI agent are booked automatically from its notes &middot; enquiries, bookings and recorded drives are read live from the CRM &middot; one demo car per model is assumed
       </div>
 
       {tab === 'board' && <Board setup={setup} bookings={bookings} recorded={recorded} activity={activity}
@@ -1208,7 +1352,8 @@ export default function TestDriveBoard({ refreshKey }) {
                                  view={view} setView={setView} hidden={hidden} setHidden={setHidden}
                                  exec={exec} setExec={setExec}
                                  loading={loadedFor !== month} loadError={monthError} />}
-      {tab === 'requests' && <Requests setup={setup} {...requests} onSchedule={schedule} />}
+      {tab === 'requests' && <Requests setup={setup} {...requests} onSchedule={schedule}
+                                       onScheduleRequest={scheduleRequest} onOpenDrive={setOpened} />}
       {tab === 'fleet' && <FleetAndTeam setup={setup} />}
 
       <Dialog open={!!draft} title="Book a test drive" onClose={() => setDraft(null)} wide>
@@ -1218,10 +1363,12 @@ export default function TestDriveBoard({ refreshKey }) {
       </Dialog>
       <Dialog open={!!opened} title="Test drive" onClose={() => setOpened(null)}>
         {opened && <BookingDetail booking={opened} car={setup.cars.find(c => c.id === opened.car_id)}
-                                  onClose={() => setOpened(null)} onChanged={changed} />}
+                                  onClose={() => setOpened(null)} onChanged={changed}
+                                  onSchedule={scheduleRequest} />}
       </Dialog>
       <Dialog open={!!record} title={shown ? RECORD_TITLE[shown.kind] : ''} onClose={() => setRecord(null)}>
-        {shown && <RecordDetail record={shown} onBook={bookFor} onOpenDrive={openDrive} />}
+        {shown && <RecordDetail record={shown} onBook={bookFor} onOpenDrive={openDrive}
+                                onScheduleRequest={scheduleRequest} />}
       </Dialog>
     </div>
   );

@@ -27,23 +27,22 @@ What is real here and what is not:
           FREESTOCK, ALLOTED or REGISTERED - with nothing marking a car as a
           demonstrator, so a family is what a test drive is booked on.
 
-  Local   the test-drive bookings. They are kept in a JSON file on this
-          machine, not in the database, because that database is shared with
-          production and a prototype should not write to it. Making this real
-          means a test_drive_booking table and an endpoint the agent can call.
+  Stored  the test drives, in dsr.test_drive_booking (db/test_drives.sql).
+          Those booked here, and those the database files on its own: every
+          test-drive enquiry - the AI agent's, the website's - is read for the
+          day, time and place it was agreed for, and booked into its slot
+          when the note says enough and the slot is free, or filed as a
+          request for the team to give a time. A request scheduled here
+          becomes the booking; it never gains a twin.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-import threading
 import time
-import uuid
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Literal, Optional
 
+import psycopg
 from fastapi import APIRouter, HTTPException, Path as PathParam, Query
 from pydantic import BaseModel, Field
 
@@ -56,19 +55,7 @@ from .db import session
 # away from a prototype writing to production.
 router = APIRouter(prefix="/api/test-drive-board", tags=["test drive board (prototype)"])
 
-# Kept out of the repository (.gitignore: .local/), so a prototype's bookings
-# can never be committed or deployed.
-STORE = Path(os.environ.get(
-    "TEST_DRIVE_STORE",
-    Path(__file__).resolve().parent.parent / ".local" / "test_drives.json",
-))
-_lock = threading.Lock()
-
 SLOT_START, SLOT_END, SLOT_MINUTES = "09:30", "19:00", 30
-
-# The car ids the board used while its fleet was three placeholders. A booking
-# made then still carries one, and is read as the family it stood for.
-_LEGACY_CAR = {"taigun-topline": "taigun", "tiguan-rline": "tiguan", "virtus-gtplus": "virtus"}
 
 _TEST_DRIVE = re.compile(r"test.?drive", re.I)
 _WHEN = re.compile(
@@ -92,21 +79,43 @@ def _slots() -> list[str]:
 _SLOTS = _slots()
 
 
-def _load() -> list[dict]:
-    try:
-        rows = json.loads(STORE.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return []
-    for r in rows:
-        r["car_id"] = _LEGACY_CAR.get(r.get("car_id"), r.get("car_id"))
-    return rows
+# Every test drive, booked here or filed by the database from an enquiry.
+_DRIVE_COLS = """booking_id, car_id, td_date, start_time, asked_time, customer, phone, consultant,
+                 location, address, source, status, call_id, lead_id, note, created_at, updated_at"""
 
 
-def _save(rows: list[dict]) -> None:
-    STORE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STORE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(STORE)            # atomic on the same volume
+def _drive(r) -> dict:
+    return {
+        "id": r["booking_id"],
+        "car_id": r["car_id"],
+        "date": r["td_date"].isoformat() if r["td_date"] else None,     # a request may have no day yet
+        "start": r["start_time"],                                       # nor a slot
+        "asked_time": r["asked_time"],
+        "customer": r["customer"],
+        "phone": r["phone"] or "",
+        "consultant": r["consultant"] or "",
+        "location": r["location"],
+        "address": r["address"] or "",
+        "source": r["source"],
+        "status": r["status"],
+        "call_id": r["call_id"],
+        "enquiry_id": f"enq-{r['lead_id']}" if r["lead_id"] else None,
+        "note": r["note"] or "",
+        "created_at": r["created_at"].isoformat(timespec="seconds"),
+        "updated_at": r["updated_at"].isoformat(timespec="seconds"),
+    }
+
+
+def _drives(cx, where: str = "TRUE", params: tuple = ()) -> list[dict]:
+    # `where` is a fixed string from this module; values travel in `params`.
+    return [_drive(r) for r in cx.execute(
+        f"SELECT {_DRIVE_COLS} FROM dsr.test_drive_booking WHERE {where} "
+        "ORDER BY td_date NULLS LAST, start_time NULLS LAST, created_at", params).fetchall()]
+
+
+def _lead_of(enquiry_id: str | None) -> int | None:
+    m = re.fullmatch(r"enq-(\d{1,9})", enquiry_id or "")
+    return int(m.group(1)) if m else None
 
 
 # ---------------------------------------------------------------- the cars
@@ -243,6 +252,8 @@ class BookingIn(BaseModel):
     call_id: Optional[str] = Field(default=None, max_length=64)
     # The CRM enquiry this drive was booked from, so the enquiry can show it.
     enquiry_id: Optional[str] = Field(default=None, max_length=32)
+    # A drive filed as a request that this booking settles.
+    request_id: Optional[str] = Field(default=None, max_length=32)
 
 
 class BookingPatch(BaseModel):
@@ -270,47 +281,85 @@ def setup():
 
 @router.get("")
 def list_bookings(start: date = Query(...), days: int = Query(14, ge=1, le=62)):
+    """Test drives on these days: booked, done, missed or cancelled - and
+    requests that already name their day."""
     end = start + timedelta(days=days)
-    with _lock:
-        rows = _load()
-    return {"bookings": [r for r in rows if start.isoformat() <= r["date"] < end.isoformat()]}
+    with session() as cx:
+        return {"bookings": _drives(cx, "td_date >= %s AND td_date < %s", (start, end))}
 
 
 @router.post("", status_code=201)
 def create_booking(b: BookingIn):
+    """Book a drive into a slot. A request the database filed - the one named,
+    or the one filed for this enquiry - becomes the booking, rather than the
+    customer ending up with two."""
     if b.car_id not in {c["id"] for c in _cars()}:
         raise HTTPException(422, "No car with that id.")
     if b.start not in _SLOTS:
         raise HTTPException(422, f"Slots run every {SLOT_MINUTES} minutes from {SLOT_START} to {SLOT_END}.")
-    row = {
-        **b.model_dump(mode="json"),
-        "id": uuid.uuid4().hex[:12],
-        "status": "booked",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    with _lock:
-        rows = _load()
-        # One car, one customer, one slot. Cancelled bookings free the slot.
-        clash = next((r for r in rows if r["car_id"] == b.car_id and r["date"] == row["date"]
-                      and r["start"] == b.start and r["status"] != "cancelled"), None)
-        if clash:
-            raise HTTPException(409, f"{b.start} on that car is already booked for {clash['customer']}.")
-        rows.append(row)
-        _save(rows)
-    return row
+    lead_id = _lead_of(b.enquiry_id)
+    fields = (b.car_id, b.date, b.start, b.customer.strip(), b.phone.strip() or None,
+              b.consultant or None, b.location,
+              (b.address.strip() or None) if b.location == "Home" else None, b.source)
+    with session() as cx:
+        try:
+            with cx.transaction():
+                req = None
+                if b.request_id:
+                    req = cx.execute("""SELECT booking_id FROM dsr.test_drive_booking
+                                         WHERE booking_id = %s AND status = 'requested' FOR UPDATE""",
+                                     (b.request_id,)).fetchone()
+                    if not req:
+                        raise HTTPException(409, "That request has already been scheduled or cancelled. "
+                                                 "Refresh to see where it stands.")
+                elif lead_id:
+                    req = cx.execute("""SELECT booking_id FROM dsr.test_drive_booking
+                                         WHERE lead_id = %s AND status = 'requested'
+                                         ORDER BY created_at DESC LIMIT 1 FOR UPDATE""",
+                                     (lead_id,)).fetchone()
+                if req:
+                    row = cx.execute(f"""
+                        UPDATE dsr.test_drive_booking
+                           SET car_id = %s, td_date = %s, start_time = %s, customer = %s, phone = %s,
+                               consultant = %s, location = %s, address = %s, source = %s,
+                               status = 'booked', call_id = coalesce(%s, call_id),
+                               lead_id = coalesce(%s, lead_id)
+                         WHERE booking_id = %s
+                        RETURNING {_DRIVE_COLS}""",
+                        (*fields, b.call_id, lead_id, req["booking_id"])).fetchone()
+                else:
+                    row = cx.execute(f"""
+                        INSERT INTO dsr.test_drive_booking
+                            (car_id, td_date, start_time, customer, phone, consultant, location,
+                             address, source, status, call_id, lead_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'booked', %s, %s)
+                        RETURNING {_DRIVE_COLS}""",
+                        (*fields, b.call_id, lead_id)).fetchone()
+        except psycopg.errors.UniqueViolation:
+            # One car, one customer, one slot.
+            clash = cx.execute("""SELECT customer FROM dsr.test_drive_booking
+                                   WHERE car_id = %s AND td_date = %s AND start_time = %s
+                                     AND status IN ('booked', 'attended', 'no_show')""",
+                               (b.car_id, b.date, b.start)).fetchone()
+            who = clash["customer"] if clash else "someone else"
+            raise HTTPException(409, f"{b.start} on that car is already booked for {who}.")
+    return _drive(row)
 
 
 @router.patch("/{booking_id}")
 def update_booking(p: BookingPatch, booking_id: str = PathParam(..., min_length=6, max_length=32)):
-    with _lock:
-        rows = _load()
-        row = next((r for r in rows if r["id"] == booking_id), None)
-        if not row:
-            raise HTTPException(404, "No such booking.")
-        row["status"] = p.status
-        row["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        _save(rows)
-    return row
+    with session() as cx:
+        try:
+            row = cx.execute(f"""UPDATE dsr.test_drive_booking SET status = %s
+                                  WHERE booking_id = %s RETURNING {_DRIVE_COLS}""",
+                             (p.status, booking_id)).fetchone()
+        except psycopg.errors.CheckViolation:
+            raise HTTPException(422, "A request needs a car, a day and a time before it can be booked.")
+        except psycopg.errors.UniqueViolation:
+            raise HTTPException(409, "That slot has since been booked for someone else.")
+    if not row:
+        raise HTTPException(404, "No such booking.")
+    return _drive(row)
 
 
 # ------------------------------------------------- the CRM's own record
@@ -340,7 +389,8 @@ _ENQUIRIES_SQL = """
     SELECT l.lead_id, l.created_at::date AS d, l.lead_name, l.mobile,
            l.model_of_interest, m.family, m.name AS model, src.channel::text AS channel,
            COALESCE(c.display_name, l.lead_owner) AS consultant,
-           l.lead_type, l.entered_by, l.origin::text AS origin
+           l.lead_type, l.entered_by, l.origin::text AS origin,
+           dsr.is_test_drive_request(l.lead_type, l.enquiry_note) AS wants_test_drive
       FROM lead l
       JOIN dim_period p ON p.period_id = l.period_id
        AND l.created_at::date BETWEEN p.period_start AND p.period_end
@@ -410,7 +460,7 @@ def _enquiry_rows(cx, where, params, cars, order="l.created_at, l.lead_id", limi
             # The agent stamps its enquiries "AI Voice/Chat Agent" and says
             # what the caller wanted; a test drive is the one this board serves.
             "by_agent": by_agent,
-            "wants_test_drive": r["lead_type"] == "test_drive",
+            "wants_test_drive": bool(r["wants_test_drive"]),
             "request": _LEAD_TYPE.get(r["lead_type"] or "", ""),
             "entered": ("AI agent" if by_agent
                         else "Record drawer" if r["origin"] == "MANUAL" else "Workbook upload"),
@@ -446,14 +496,18 @@ def _person(phone: str | None, name: str | None) -> tuple[str, str] | None:
 
 
 def _link_enquiries(enquiries: list[dict], drives: list[dict]) -> None:
-    """Give each enquiry the test drive booked for it, if there is one: a drive
-    booked from that enquiry on this board, or one for the same person on or
-    after the day they enquired. An enquiry that asked for a test drive and has
-    none - or whose drive was a no-show - is flagged for follow-up: that is the
-    promise nobody has kept yet."""
+    """Give each enquiry its test drive, if there is one: the latest drive filed
+    for that enquiry, or else one for the same person on or after the day they
+    enquired. An enquiry that asked for a test drive and has none with a time -
+    nothing booked, only a request, or a no-show - is flagged for follow-up:
+    that is the promise nobody has kept yet."""
+    on = lambda d: d["date"] or d["created_at"][:10]        # a request may have no day yet
     live = sorted((d for d in drives if d.get("status") != "cancelled"),
-                  key=lambda d: (d["date"], d.get("start", "")))
-    by_enquiry = {d["enquiry_id"]: d for d in live if d.get("enquiry_id")}
+                  key=lambda d: (on(d), d.get("start") or ""))
+    by_enquiry: dict[str, dict] = {}
+    for d in sorted(live, key=lambda d: d["created_at"]):
+        if d.get("enquiry_id"):
+            by_enquiry[d["enquiry_id"]] = d                # the latest wins: a re-booking after a no-show
     by_person: dict[tuple[str, str], list[dict]] = {}
     for d in live:
         key = _person(d.get("phone"), d.get("customer"))
@@ -463,9 +517,10 @@ def _link_enquiries(enquiries: list[dict], drives: list[dict]) -> None:
         d = by_enquiry.get(e["id"])
         if d is None:
             key = _person(e["phone"], e["name"])
-            d = next((x for x in by_person.get(key, []) if x["date"] >= e["date"]), None) if key else None
+            d = next((x for x in by_person.get(key, []) if on(x) >= e["date"]), None) if key else None
         e["test_drive"] = d
-        e["follow_up"] = bool(e["wants_test_drive"] and (d is None or d.get("status") == "no_show"))
+        e["follow_up"] = bool(e["wants_test_drive"]
+                              and (d is None or d.get("status") in ("requested", "no_show")))
 
 
 @router.get("/recorded")
@@ -515,8 +570,7 @@ def sales_activity(start: date = Query(...), days: int = Query(31, ge=1, le=62))
     with session() as cx:
         bookings = _booking_rows(cx, "b.booking_date >= %s AND b.booking_date < %s", (start, end), cars)
         enquiries = _enquiry_rows(cx, "l.created_at::date >= %s AND l.created_at::date < %s", (start, end), cars)
-    with _lock:
-        drives = _load()
+        drives = _drives(cx)
     _link_enquiries(enquiries, drives)
     return {"bookings": bookings, "enquiries": enquiries}
 
@@ -548,43 +602,58 @@ def search(q: str = Query(..., min_length=2, max_length=60)):
         enquiries = _enquiry_rows(cx, w, a, cars, order="l.created_at DESC, l.lead_id DESC", limit=15)
         w, a = match("t.lead_name", "t.mobile")
         recorded = _recorded_rows(cx, w, a, cars, order="t.td_date DESC, t.test_drive_id DESC", limit=10)
-    with _lock:
-        drives = _load()
+        drives = _drives(cx)
+        w, a = match("customer", "phone")
+        local = _drives(cx, w, a)
     _link_enquiries(enquiries, drives)
-    needle = text.lower()
-    local = [d for d in drives
-             if needle in (d.get("customer") or "").lower()
-             or (phone_like and digits in re.sub(r"\D", "", d.get("phone") or ""))]
-    results = ([{"kind": "bookings", "item": r} for r in bookings]
-               + [{"kind": "enquiries", "item": r} for r in enquiries]
-               + [{"kind": "drives", "item": r} for r in recorded]
-               + [{"kind": "local", "item": r} for r in local])
-    results.sort(key=lambda x: x["item"]["date"], reverse=True)
+    # `date` on the result is where the board opens it: a request with no day
+    # yet opens on the day it was filed.
+    results = ([{"kind": "bookings", "item": r, "date": r["date"]} for r in bookings]
+               + [{"kind": "enquiries", "item": r, "date": r["date"]} for r in enquiries]
+               + [{"kind": "drives", "item": r, "date": r["date"]} for r in recorded]
+               + [{"kind": "local", "item": r, "date": r["date"] or r["created_at"][:10]} for r in local])
+    results.sort(key=lambda x: x["date"], reverse=True)
     return {"results": results[:30]}
 
 
 # ------------------------------------------------------ the agent's promises
 
 @router.get("/requests")
-def agent_requests():
-    """Test drives the agent promised on a call and nobody has scheduled.
+def agent_requests(calls: bool = Query(True, description="Also read the call log (slow)")):
+    """Test drives waiting for someone to give them a time.
 
-    Read from the live call log: any call whose summary mentions a test drive,
-    less the ones already turned into a booking. The car is the model family
-    the summary names, and any day or time it mentions is passed on as a hint -
-    the agent records "for Friday" in prose, not as a date."""
+    `waiting`: drives the database filed as requests - a test-drive enquiry
+    whose note did not say when, or asked for a slot already taken.
+
+    `requests`: calls in the live call log whose summary mentions a test drive
+    that has no drive on record at all - neither booked from the call nor
+    filed for the same person. The car is the model family the summary names,
+    and any day or time it mentions is passed on as a hint."""
+    cars = _cars()
+    with session() as cx:
+        drives = _drives(cx)
+    waiting = [d for d in drives if d["status"] == "requested"]
+    if not calls:                         # the waiting list alone: a quick read, for live refresh
+        return {"waiting": waiting}
+    open_ = [d for d in drives if d["status"] != "cancelled"]
+    from_calls = {d["call_id"] for d in open_ if d["call_id"]}
+    on = lambda d: d["date"] or d["created_at"][:10]
+    people: dict[tuple[str, str], list[str]] = {}
+    for d in open_:
+        key = _person(d["phone"], d["customer"])
+        if key:
+            people.setdefault(key, []).append(on(d))
     try:
         from .calls import list_calls
         calls = list_calls().get("calls", [])
     except HTTPException as e:            # no Perfox key on this machine
-        return {"requests": [], "unavailable": e.detail}
-    cars = _cars()
-    with _lock:
-        booked = {r.get("call_id") for r in _load() if r.get("call_id") and r["status"] != "cancelled"}
+        return {"waiting": waiting, "requests": [], "unavailable": e.detail}
     out = []
     for c in calls:
         summary = c.get("summary") or ""
-        if not _TEST_DRIVE.search(summary) or c.get("id") in booked:
+        if (not _TEST_DRIVE.search(summary) or c.get("id") in from_calls
+                or any(day >= (c.get("started_at") or "")[:10]
+                       for day in people.get(_person(c.get("phone"), c.get("name")), []))):
             continue
         when = _WHEN.search(summary)
         out.append({
@@ -597,4 +666,4 @@ def agent_requests():
             "when_hint": when.group(1) if when else None,
             "summary": summary,
         })
-    return {"requests": out}
+    return {"waiting": waiting, "requests": out}

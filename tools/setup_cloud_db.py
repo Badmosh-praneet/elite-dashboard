@@ -51,6 +51,9 @@ def main():
                 triggers_sql = (ROOT / "db" / "triggers.sql").read_text(encoding="utf-8")
                 cur.execute(triggers_sql)
 
+                print("   Applying db/test_drives.sql (test drives, filed from enquiries)...")
+                cur.execute((ROOT / "db" / "test_drives.sql").read_text(encoding="utf-8"))
+
         os.environ["DATABASE_URL"] = dsn
 
         print("3/4 Running ETL to load DSR August 2026 workbook into PostgreSQL...")

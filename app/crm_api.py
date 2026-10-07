@@ -177,6 +177,7 @@ def fetch_leads_for_agent(payload: FetchLeadsPayload):
                    l.model_id, m.name AS model, l.variant_of_interest,
                    COALESCE(l.lead_status, 'New') AS lead_status,
                    l.qualified_stage, l.rating, l.created_at,
+                   l.model_of_interest, l.lead_type, l.enquiry_note,
                    p.label AS period
             FROM lead l
             LEFT JOIN dim_period      p ON p.period_id     = l.period_id

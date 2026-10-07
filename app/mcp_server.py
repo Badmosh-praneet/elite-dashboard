@@ -16,6 +16,7 @@ instead.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from typing import Any, Callable, Optional
 
@@ -146,7 +147,48 @@ def _tool_get_leads(args: dict) -> Any:
         date_from=args.get("date_from") or args.get("date"),
         date_to=args.get("date_to") or args.get("date"),
     )
-    return fetch_leads_for_agent(payload)
+    return _one_line_per_enquiry(fetch_leads_for_agent(payload))
+
+
+_LEAD_TYPES = {"test_drive": "Test drive", "general_enquiry": "General enquiry", "service": "Service",
+               "insurance": "Insurance", "rental": "Rental", "career": "Career"}
+
+
+def _one_line_per_enquiry(rows: list[dict]) -> dict:
+    """The phone agent saves one lead per need, so a caller who wants to order
+    a Virtus and test-drive it becomes two leads seconds apart - and a list
+    showed the same person twice. Leads from one customer (phone and first
+    name: test calls put several names on one number) for the same car on the
+    same day are one line here, saying how many leads it holds and what each
+    asked for. The database keeps both, and the dashboard counts both."""
+    lines: list[dict] = []
+    by_key: dict[tuple, dict] = {}
+    for r in rows:
+        model = r.get("model") or r.get("model_of_interest")   # a model the catalogue did not match
+        phone = re.sub(r"\D", "", r.get("mobile") or "")[-10:]
+        first = (r.get("lead_name") or "").strip().split(" ")[0].lower()
+        key = (phone or (r.get("lead_name") or "").strip().lower(), first,
+               (model or "").strip().upper(), str(r.get("created_at") or "")[:10])
+        need = {"lead_id": r.get("lead_id"),
+                "type": _LEAD_TYPES.get(r.get("lead_type") or "", r.get("lead_type")),
+                "note": r.get("enquiry_note")}
+        line = by_key.get(key)
+        if line:
+            line["leads"] += 1
+            line["needs"].append(need)
+            continue
+        line = {k: v for k, v in r.items() if k not in ("model_of_interest", "lead_type", "enquiry_note")}
+        line.update(model=model, leads=1, needs=[need])
+        by_key[key] = line
+        lines.append(line)
+    return {
+        "customers": len(lines),
+        "leads": len(rows),
+        "note": ("One line per customer, car and day. 'leads' on a line is how many leads it holds - "
+                 "a caller who asked for two things in one call is saved as two leads, and the "
+                 "dashboard counts both."),
+        "lines": lines,
+    }
 
 
 def _tool_get_bookings(args: dict) -> Any:
@@ -260,7 +302,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_leads",
-        "description": "Enquiries/leads, live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile.",
+        "description": "Enquiries/leads, live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile. Leads from one customer for the same car on the same day come as one line, with how many leads it holds and what each asked for - list lines, not leads. For counts use get_leads_summary.",
         "input_schema": {
             "type": "object",
             "properties": {

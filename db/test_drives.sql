@@ -56,22 +56,36 @@ CREATE TABLE IF NOT EXISTS dsr.test_drive_booking (
     updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
+-- Sample drives: made-up test drives that fill the calendar for showing the
+-- section, flagged so they never hold a slot a real customer could take (the
+-- slot index, the agent's free-slot check and its booking all pass over
+-- them) and so they go in one statement:
+--     DELETE FROM dsr.test_drive_booking WHERE sample;
+ALTER TABLE dsr.test_drive_booking ADD COLUMN IF NOT EXISTS sample boolean NOT NULL DEFAULT false;
+
 -- Only a request, or a drive called off, may be without its car, day and
--- slot. (Replaced rather than created, so a re-run also widens an older one.)
+-- slot - and a no-show that was only ever an enquiry: the customer asked for
+-- a day, it passed with no booking, so it has its day but never had a slot
+-- (lapse_test_drive_enquiries). (Replaced rather than created, so a re-run
+-- also widens an older one.)
 ALTER TABLE dsr.test_drive_booking DROP CONSTRAINT IF EXISTS test_drive_booking_placed;
 ALTER TABLE dsr.test_drive_booking ADD CONSTRAINT test_drive_booking_placed CHECK (
     status IN ('requested', 'cancelled')
+    OR (status = 'no_show' AND td_date IS NOT NULL AND start_time IS NULL)
     OR (car_id IS NOT NULL AND td_date IS NOT NULL AND start_time IS NOT NULL));
 
 COMMENT ON TABLE dsr.test_drive_booking IS
   'Test drives: booked by the AI agent on the call (book_test_drive), on the
    Test Drives board, or filed from test-drive enquiries (lead_test_drive).
-   status = requested means the day or time is still to be confirmed.';
+   status = requested means the day or time is still to be confirmed; a
+   no_show with no start_time is an enquiry whose day passed with no booking.';
 
--- One drive per car per slot. Cancelled drives and requests hold no slot.
-CREATE UNIQUE INDEX IF NOT EXISTS test_drive_booking_slot
+-- One drive per car per slot. Cancelled drives, requests and sample drives
+-- hold no slot. (Dropped and made again, so a re-run also narrows an older one.)
+DROP INDEX IF EXISTS dsr.test_drive_booking_slot;
+CREATE UNIQUE INDEX test_drive_booking_slot
     ON dsr.test_drive_booking (car_id, td_date, start_time)
-    WHERE status IN ('booked', 'attended', 'no_show');
+    WHERE status IN ('booked', 'attended', 'no_show') AND NOT sample;
 CREATE INDEX IF NOT EXISTS test_drive_booking_day  ON dsr.test_drive_booking (td_date);
 CREATE INDEX IF NOT EXISTS test_drive_booking_lead ON dsr.test_drive_booking (lead_id);
 
@@ -326,7 +340,7 @@ LANGUAGE sql STABLE AS $$
             OR s > to_char(now() AT TIME ZONE 'Asia/Kolkata', 'HH24:MI'))
        AND NOT EXISTS (SELECT 1 FROM dsr.test_drive_booking b
                         WHERE b.car_id = car AND b.td_date = d AND b.start_time = s
-                          AND b.status IN ('booked', 'attended', 'no_show'))
+                          AND b.status IN ('booked', 'attended', 'no_show') AND NOT b.sample)
      ORDER BY s;
 $$;
 
@@ -339,7 +353,7 @@ CREATE OR REPLACE FUNCTION dsr.live_drives(
 RETURNS SETOF dsr.test_drive_booking
 LANGUAGE sql STABLE AS $$
     SELECT b.* FROM dsr.test_drive_booking b
-     WHERE b.status IN ('requested', 'booked')
+     WHERE b.status IN ('requested', 'booked') AND NOT b.sample
        AND (b.lead_id = p_lead_id
             OR (dsr.phone10(p_phone) IS NOT NULL
                 AND dsr.phone10(b.phone) = dsr.phone10(p_phone)
@@ -348,6 +362,36 @@ LANGUAGE sql STABLE AS $$
        AND (b.td_date >= from_day OR (b.td_date IS NULL AND b.created_at >= from_day - 30))
      ORDER BY (b.status = 'booked') DESC, b.created_at DESC;
 $$;
+
+
+-- ---------------------------------------------------------------------
+-- LAPSE: an enquiry whose day has gone by.
+-- ---------------------------------------------------------------------
+
+-- An enquiry that asked for a day, and saw the day pass with no booking, is a
+-- no-show: the customer asked for that day and did not come. It keeps its
+-- day and never gains a slot, as it never held one. An enquiry with no day
+-- never lapses. Run by the board as it reads, and before the agent files or
+-- books, so everyone sees the same; with nothing to mark it writes nothing
+-- (so sends no change notice), and a failure here never stops the caller.
+-- Returns how many it marked.
+CREATE OR REPLACE FUNCTION dsr.lapse_test_drive_enquiries() RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+    today date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+    n     integer := 0;
+BEGIN
+    IF EXISTS (SELECT 1 FROM dsr.test_drive_booking
+                WHERE status = 'requested' AND td_date < today) THEN
+        UPDATE dsr.test_drive_booking SET status = 'no_show', start_time = NULL
+         WHERE status = 'requested' AND td_date < today;
+        GET DIAGNOSTICS n = ROW_COUNT;
+    END IF;
+    RETURN n;
+EXCEPTION WHEN others THEN
+    RAISE WARNING 'test-drive enquiries not marked no-show: %', SQLERRM;
+    RETURN 0;
+END $$;
 
 
 -- ---------------------------------------------------------------------
@@ -375,6 +419,9 @@ DECLARE
     id_     text;
     moved   text;
 BEGIN
+    -- Close the enquiries whose day has gone by first, so a new call files a
+    -- new drive rather than reopening a missed one.
+    PERFORM dsr.lapse_test_drive_enquiries();
     SELECT * INTO w FROM dsr.test_drive_when(concat_ws(' ', l.enquiry_note, l.model_of_interest), b0);
 
     SELECT dsr.car_id_for(dm.family) INTO car FROM dsr.dim_model dm WHERE dm.model_id = l.model_id;
@@ -387,9 +434,10 @@ BEGIN
         slot := w.asked_time;
     END IF;
     -- Enough to book on its own: a car, a day not past and within two
-    -- months, and a slot on the grid that has not gone by today.
+    -- months, and a slot on the grid that has not gone by today. A day that
+    -- has gone by (an older enquiry, filed late) stays an enquiry on that day.
     whole := car IS NOT NULL AND w.td_date IS NOT NULL AND slot IS NOT NULL
-             AND w.td_date <= b0 + 60
+             AND w.td_date >= today AND w.td_date <= b0 + 60
              AND NOT (w.td_date = today AND slot <= nowt);
 
     -- Filed before with exactly this: nothing to do (a re-run, an edit
@@ -562,6 +610,7 @@ DECLARE
     id_    text;
     near   text;
 BEGIN
+    PERFORM dsr.lapse_test_drive_enquiries();
     SELECT * INTO l FROM dsr.lead WHERE lead_id = p_lead_id;
     IF NOT FOUND THEN
         RETURN QUERY SELECT 'invalid', NULL::text, NULL::text, NULL::date, NULL::text,
@@ -607,7 +656,7 @@ BEGIN
 
     IF EXISTS (SELECT 1 FROM dsr.test_drive_booking b
                 WHERE b.car_id = car_ AND b.td_date = w.td_date AND b.start_time = slot
-                  AND b.status IN ('booked', 'attended', 'no_show')
+                  AND b.status IN ('booked', 'attended', 'no_show') AND NOT b.sample
                   AND b.booking_id IS DISTINCT FROM mine) THEN
         SELECT string_agg(s, ', ') INTO near FROM (
             SELECT s FROM dsr.test_drive_open(car_, w.td_date) s
@@ -655,18 +704,21 @@ END $$;
 
 -- ---------------------------------------------------------------------
 -- BACKFILL: recent test-drive enquiries already on record, filed the way the
--- trigger files new ones, each counted from its own day. Only those still to
--- come: a drive whose day has passed is left as the enquiry it was - booking
--- it now would show a slot nobody held. Idempotent; one odd row is skipped
+-- trigger files new ones, each counted from its own day, so that every
+-- test-drive enquiry is in the section. One whose day has passed is filed as
+-- an enquiry on that day, never booked: booking it now would show a slot
+-- nobody held. Only enquiries never filed before: a re-run must not bring
+-- back a drive the team has since cancelled or moved. One odd row is skipped
 -- with a warning rather than stopping the rest.
 -- ---------------------------------------------------------------------
 SELECT l.lead_id, dsr.try_file_test_drive(l, l.created_at::date) AS booking_id
   FROM dsr.lead l
  WHERE l.origin::text = 'MANUAL'
    AND dsr.is_test_drive_request(l.lead_type, l.enquiry_note)
+   AND NOT EXISTS (SELECT 1 FROM dsr.test_drive_booking b WHERE b.lead_id = l.lead_id)
    AND l.created_at >= now() - interval '30 days'
-   AND coalesce((dsr.test_drive_when(concat_ws(' ', l.enquiry_note, l.model_of_interest),
-                                     l.created_at::date)).td_date,
-                (now() AT TIME ZONE 'Asia/Kolkata')::date)
-       >= (now() AT TIME ZONE 'Asia/Kolkata')::date
  ORDER BY l.created_at;
+
+-- LAPSE now, so an enquiry whose day has already gone by shows as the
+-- no-show it is from the start.
+SELECT dsr.lapse_test_drive_enquiries() AS enquiries_marked_no_show;

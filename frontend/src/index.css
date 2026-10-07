@@ -267,6 +267,14 @@ button.primary:hover {
   border-color: var(--shu-ink);
   color: var(--surface);
 }
+/* A button that cannot be pressed has to look it. */
+button.primary:disabled,
+button.primary:disabled:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Live indicator
    ------------------------------------------------------------------
@@ -585,6 +593,32 @@ td.num, th.num { text-align: right; }
 }
 .tdb-tabs button.is-on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
 .tdb-note { font-size: var(--fs-small); color: var(--ink-muted); margin-bottom: 16px; }
+.tdb-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 10px; margin-bottom: 18px; }
+.tdb-kpis.is-loading { min-height: 92px; }
+.tdb-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--grid);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  text-align: left;
+}
+.tdb-kpi-btn { cursor: pointer; transition: border-color var(--t-fast) var(--ease-out); }
+.tdb-kpi-btn:hover, .tdb-kpi-btn:focus-visible { border-color: var(--s1); }
+.tdb-kpi-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); }
+.tdb-kpi-value { font-size: 26px; font-weight: 600; line-height: 1.15; color: var(--ink); font-variant-numeric: lining-nums tabular-nums; }
+.tdb-kpi-sub { font-size: var(--fs-small); color: var(--ink-muted); }
+.tdb-kpi.is-warn { box-shadow: inset 3px 0 0 var(--warning); }
+.tdb-kpi.is-warn .tdb-kpi-value { color: var(--warning); }
+/* Sample drives, said plainly wherever one is opened or listed. */
+.tdb-samplechip { margin-left: 8px; padding: 1px 7px; border: 1px dashed var(--ink-muted); border-radius: 999px; font-size: var(--fs-micro); font-weight: 600; color: var(--ink-muted); }
+.tdb-samplenote { padding: 8px 12px; border: 1px dashed var(--ink-muted); border-radius: var(--radius-sm); font-size: var(--fs-small); color: var(--ink-2); }
+.tdb-missednote { margin-bottom: 12px; padding: 8px 12px; border-left: 3px solid var(--critical); background: var(--critical-light); font-size: var(--fs-small); color: var(--ink); }
+.tdb-row.is-sample { border-style: dashed; }
+.tdb-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-small); color: var(--ink-2); cursor: pointer; }
 
 /* Month navigation: the board used to be a fortnight from today and nothing
    else, so the months the dashboard reports on could not be reached. */
@@ -636,15 +670,20 @@ td.num, th.num { text-align: right; }
 /* Enquiries and bookings beside the drives. A dot in Sales over time's colour
    and a count, so a day says what it held before it is opened; the month's
    totals in the month bar double as the key. */
-.tdb-dot { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--viz-3); }
-.tdb-dot[data-kind="enquiries"] { background: var(--viz-2); }
-.tdb-dot[data-kind="bookings"]  { background: var(--viz-1); }
+.tdb-dot { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--s1); }
+.tdb-dot[data-status="attended"]  { background: var(--good); }
+.tdb-dot[data-status="no_show"]   { background: var(--critical); }
+.tdb-dot[data-status="cancelled"] { background: var(--ink-muted); }
+.tdb-dot[data-status="requested"] { background: var(--warning); }
 .tdb-tally { display: inline-flex; align-items: center; gap: 6px; }
 .tdb-marks {
   display: flex; flex-wrap: wrap; justify-content: center; gap: 1px 6px;
   font-size: var(--fs-micro); color: var(--ink-2); font-variant-numeric: lining-nums tabular-nums;
 }
 .tdb-mark { display: inline-flex; align-items: center; gap: 3px; }
+.tdb-mark.is-cancelled { color: var(--ink-muted); }
+.tdb-day.is-on .tdb-mark.is-cancelled { color: color-mix(in srgb, #fff 70%, transparent); }
+.tdb-day.is-on .tdb-mark.is-cancelled .tdb-dot { background: color-mix(in srgb, #fff 60%, transparent); }
 .tdb-day.is-on .tdb-mark { color: #fff; }
 /* The selected day is filled with the bookings colour; a ring keeps its dot. */
 .tdb-day.is-on .tdb-dot { box-shadow: 0 0 0 1.5px #fff; }
@@ -668,9 +707,6 @@ td.num, th.num { text-align: right; }
 .tdb-kind[aria-pressed="false"] { color: var(--ink-muted); text-decoration: line-through; }
 .tdb-kind[aria-pressed="false"] .tdb-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-muted); }
 /* Follow-ups: enquiries that asked for a test drive and have none, or missed it. */
-.tdb-dot[data-kind="follow"] { background: var(--warning); }
-.tdb-follow-note { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px; font-size: var(--fs-small); font-weight: 600; color: var(--warning); }
-.tdb-daysum .tdb-follow-note b { color: var(--warning); }
 
 /* View, executive and search. The Day/Week pair is Sales over time's, the
    search box the record tables'. */
@@ -732,13 +768,7 @@ td.num, th.num { text-align: right; }
 @media (max-width: 640px) { .tdb-search { width: 100%; margin-left: 0; } }
 
 /* The agenda, grouped the way a sale runs: enquiries, test drives, bookings. */
-.tdb-group + .tdb-group { margin-top: 20px; }
-.tdb-h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; font-size: var(--fs-small); font-weight: 600; color: var(--ink-2); }
-.tdb-h4 span { color: var(--ink-muted); font-weight: 500; font-variant-numeric: lining-nums tabular-nums; }
-.tdb-line { padding: 8px 14px; }
 .tdb-more { margin-top: 8px; padding: 5px 12px; font-size: var(--fs-small); }
-.tdb-state { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-small); color: var(--ink-2); white-space: nowrap; }
-.tdb-state i { width: 6px; height: 6px; border-radius: 50%; }
 
 .tdb-gridwrap { overflow-x: auto; border: 1px solid var(--grid); border-radius: var(--radius-sm); }
 .tdb-grid {
@@ -808,7 +838,7 @@ td.num, th.num { text-align: right; }
   color: var(--ink-muted);
 }
 .tdb-entry {
-  --k: var(--viz-2);
+  --k: var(--warning);         /* an enquiry: amber, as the legend has it */
   width: 150px;
   display: flex;
   flex-direction: column;
@@ -825,13 +855,14 @@ td.num, th.num { text-align: right; }
   transition: background var(--t-fast) var(--ease-out);
 }
 .tdb-entry:hover, .tdb-entry:focus-visible { background: color-mix(in srgb, var(--k) 18%, var(--surface)); }
-.tdb-entry[data-kind="bookings"] { --k: var(--viz-1); }
-.tdb-entry[data-kind="drives"]   { --k: var(--viz-3); }
+
 .tdb-entry b { font-size: var(--fs-small); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tdb-entry span { color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* An enquiry's test drive: amber while it is still owed, green once booked. */
-.tdb-entry.is-follow span { color: var(--warning); font-weight: 600; }
-.tdb-entry.is-linked span { color: var(--good-text); }
+.tdb-entry span { color: var(--warning); }
+/* An enquiry whose day passed with no booking: a no-show, in the no-show red. */
+.tdb-entry[data-status="no_show"] { --k: var(--critical); }
+.tdb-entry[data-status="no_show"] span { color: var(--critical); }
 /* A test drive filtered out still holds its slot. */
 .tdb-block.is-dim { opacity: 0.35; }
 /* The week in view, picked out in the strip. */
@@ -905,13 +936,18 @@ td.num, th.num { text-align: right; }
 .tdb-block b { font-size: var(--fs-small); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tdb-block span { color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tdb-block[data-status="attended"] { box-shadow: inset 3px 0 0 var(--good); background: color-mix(in srgb, var(--good) 13%, var(--surface)); }
-.tdb-block[data-status="no_show"]  { box-shadow: inset 3px 0 0 var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
+.tdb-block[data-status="no_show"]  { box-shadow: inset 3px 0 0 var(--critical); background: color-mix(in srgb, var(--critical) 12%, var(--surface)); }
+/* A sample drive: dashed, so it is never mistaken for a customer's. */
+.tdb-block.is-sample, .tdb-entry.is-sample { outline: 1px dashed color-mix(in srgb, var(--ink-muted) 70%, transparent); outline-offset: -3px; }
+.tdb-block.is-sample b, .tdb-entry.is-sample b { color: var(--ink-2); font-weight: 600; }
 
 .tdb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 10px 0 22px; font-size: var(--fs-small); color: var(--ink-2); }
 .tdb-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .tdb-swatch { width: 10px; height: 12px; display: inline-block; box-shadow: inset 3px 0 0 var(--s1); background: color-mix(in srgb, var(--s1) 12%, var(--surface)); }
 .tdb-swatch[data-status="attended"] { box-shadow: inset 3px 0 0 var(--good); background: color-mix(in srgb, var(--good) 13%, var(--surface)); }
-.tdb-swatch[data-status="no_show"]  { box-shadow: inset 3px 0 0 var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
+.tdb-swatch[data-status="no_show"]  { box-shadow: inset 3px 0 0 var(--critical); background: color-mix(in srgb, var(--critical) 12%, var(--surface)); }
+.tdb-swatch[data-status="requested"] { box-shadow: inset 3px 0 0 var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
+.tdb-swatch.is-sample { box-shadow: none; background: transparent; outline: 1px dashed var(--ink-muted); outline-offset: -1px; }
 .tdb-hint { color: var(--ink-muted); }
 
 .tdb-h3 { font-size: var(--fs-lead); font-weight: 600; margin: 0 0 10px; color: var(--ink); }
@@ -941,7 +977,7 @@ td.num, th.num { text-align: right; }
   background: color-mix(in srgb, var(--s1) 12%, var(--surface));
 }
 .tdb-pill[data-status="attended"]  { color: var(--good-text); background: color-mix(in srgb, var(--good) 14%, var(--surface)); }
-.tdb-pill[data-status="no_show"]   { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
+.tdb-pill[data-status="no_show"]   { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, var(--surface)); }
 .tdb-pill[data-status="cancelled"] { color: var(--ink-muted); background: var(--sunken); }
 /* Still owed a time: the follow-up's amber. */
 .tdb-pill[data-status="requested"] { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
@@ -1004,6 +1040,8 @@ td.num, th.num { text-align: right; }
 .tdb-notetext { white-space: pre-wrap; color: var(--ink-2); line-height: 1.5; }
 .tdb-h3-gap { margin-top: 26px; }
 .tdb-error { padding: 9px 12px; border-left: 3px solid var(--critical); background: color-mix(in srgb, var(--critical) 8%, var(--surface)); font-size: var(--fs-small); color: var(--ink); white-space: pre-line; }
+.tdb-failed { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tdb-nofree { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 8px 12px; border-left: 3px solid var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); font-size: var(--fs-small); color: var(--ink); }
 .tdb-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .tdb-detail dl { display: grid; grid-template-columns: 96px 1fr; gap: 7px 12px; margin: 0; font-size: var(--fs-body); }
 .tdb-detail dt { color: var(--ink-muted); font-size: var(--fs-small); padding-top: 1px; }

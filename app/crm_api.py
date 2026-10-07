@@ -1,6 +1,6 @@
 import os
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -70,6 +70,11 @@ class FetchLeadsPayload(BaseModel):
     period: Optional[str] = 'active'
     # Name or mobile, for answering "what do we have for <customer>".
     search: Optional[str] = None
+    # A day or a span of days: 'today', 'yesterday' or YYYY-MM-DD. Given
+    # either, the reporting month is not consulted - today's enquiries are
+    # today's, whichever month the dashboard is set to.
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
 
 
 class FetchBookingsPayload(BaseModel):
@@ -77,6 +82,40 @@ class FetchBookingsPayload(BaseModel):
     period: Optional[str] = 'active'
     search: Optional[str] = None
     status: Optional[str] = None          # fulfilment_status
+    date_from: Optional[str] = None       # as for leads, on the booking date
+    date_to: Optional[str] = None
+
+
+# India's calendar: "today" for the showroom, whatever the server's clock says.
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _day(value: Optional[str]) -> Optional[date]:
+    """'today', 'yesterday', 'tomorrow' or YYYY-MM-DD, as a date in India."""
+    if not value or not value.strip():
+        return None
+    v = value.strip().lower()
+    shift = {"today": 0, "yesterday": -1, "tomorrow": 1}
+    if v in shift:
+        return datetime.now(_IST).date() + timedelta(days=shift[v])
+    try:
+        return date.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail=f"Not a day: {value!r}. Use today, yesterday, tomorrow or YYYY-MM-DD.")
+
+
+def _date_clause(column: str, date_from: Optional[str],
+                 date_to: Optional[str]) -> Optional[tuple[str, list]]:
+    """A day or a span of days on `column`, or None when neither end is given.
+    One end alone is that single day."""
+    lo, hi = _day(date_from), _day(date_to)
+    if lo is None and hi is None:
+        return None
+    lo, hi = lo or hi, hi or lo
+    if hi < lo:
+        lo, hi = hi, lo
+    return f" AND {column} BETWEEN %s AND %s", [lo, hi]
 
 
 def _period_clause(period: Optional[str], alias: str,
@@ -120,9 +159,15 @@ def fetch_leads_for_agent(payload: FetchLeadsPayload):
 
     So: the status match is NULL-safe (an untouched lead IS new), and the read
     is scoped to a reporting month, defaulting to the one on screen.
+
+    The match is also blind to case: the AI agent saves its leads as 'new',
+    a workbook as 'New', and 'New' alone used to skip every lead the agent
+    took. A day or a span of days (date_from / date_to) reads those days,
+    whichever month the dashboard is set to; status 'all' drops that filter.
     """
     if not is_db_ready():
         raise HTTPException(status_code=503, detail="Database not ready")
+    dated = _date_clause("l.created_at::date", payload.date_from, payload.date_to)
 
     try:
         sql = """
@@ -142,15 +187,19 @@ def fetch_leads_for_agent(payload: FetchLeadsPayload):
         """
         params: list = []
 
-        if payload.status:
+        if payload.status and payload.status.strip().lower() != 'all':
             # COALESCE, so a lead nobody has touched counts as New instead of
             # falling out of every filter.
-            sql += " AND COALESCE(l.lead_status, 'New') = %s"
-            params.append(payload.status)
+            sql += " AND lower(COALESCE(l.lead_status, 'New')) = lower(%s)"
+            params.append(payload.status.strip())
 
-        clause, extra = _period_clause(payload.period, "l")
-        sql += clause
-        params += extra
+        if dated:
+            sql += dated[0]
+            params += dated[1]
+        else:
+            clause, extra = _period_clause(payload.period, "l")
+            sql += clause
+            params += extra
 
         if payload.search:
             sql += " AND (l.lead_name ILIKE %s OR l.mobile ILIKE %s)"
@@ -173,10 +222,13 @@ def fetch_bookings_for_agent(payload: FetchBookingsPayload):
     There was no booking endpoint at all, so any question about an order - "what
     is booked for <customer>", "has their car been allotted" - could only be
     answered by guessing. Reads v_bookings, which is the same view the
-    dashboard's order book draws, so the two cannot disagree.
+    dashboard's order book draws, so the two cannot disagree. A day or a span
+    of days (date_from / date_to, on the booking date) reads those days,
+    whichever month the dashboard is set to.
     """
     if not is_db_ready():
         raise HTTPException(status_code=503, detail="Database not ready")
+    dated = _date_clause("b.booking_date::date", payload.date_from, payload.date_to)
 
     try:
         sql = """
@@ -189,12 +241,16 @@ def fetch_bookings_for_agent(payload: FetchBookingsPayload):
         """
         params: list = []
 
-        clause, extra = _period_clause(
-            payload.period, "b",
-            id_expr="(SELECT bb.period_id FROM booking bb "
-                    "WHERE bb.booking_id = b.booking_id)")
-        sql += clause
-        params += extra
+        if dated:
+            sql += dated[0]
+            params += dated[1]
+        else:
+            clause, extra = _period_clause(
+                payload.period, "b",
+                id_expr="(SELECT bb.period_id FROM booking bb "
+                        "WHERE bb.booking_id = b.booking_id)")
+            sql += clause
+            params += extra
 
         if payload.status:
             sql += " AND b.fulfilment_status = %s"

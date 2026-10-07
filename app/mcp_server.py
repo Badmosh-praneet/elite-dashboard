@@ -19,7 +19,7 @@ import os
 import secrets
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel
 
 from .crm_api import (
@@ -119,6 +119,8 @@ def _tool_get_leads(args: dict) -> Any:
         status=args.get("status", "New"),
         period=args.get("period", "active"),
         search=args.get("search"),
+        date_from=args.get("date_from") or args.get("date"),
+        date_to=args.get("date_to") or args.get("date"),
     )
     return fetch_leads_for_agent(payload)
 
@@ -129,14 +131,46 @@ def _tool_get_bookings(args: dict) -> Any:
         period=args.get("period", "active"),
         search=args.get("search"),
         status=args.get("status"),
+        date_from=args.get("date_from") or args.get("date"),
+        date_to=args.get("date_to") or args.get("date"),
     )
     return fetch_bookings_for_agent(payload)
+
+
+def _yes(value: Any, default: bool = True) -> bool:
+    """A flag as an agent may send it: true/false, or 'true'/'no'/'0'."""
+    if value is None:
+        return default
+    return str(value).strip().lower() not in ("false", "no", "0", "off")
+
+
+def _tool_get_test_drives(args: dict) -> Any:
+    from .test_drives import agent_test_drives
+    return agent_test_drives(
+        date_=args.get("date"),
+        date_from=args.get("date_from"),
+        date_to=args.get("date_to"),
+        status=args.get("status"),
+        car=args.get("car"),
+        search=args.get("search"),
+        include_samples=_yes(args.get("include_samples")),
+        limit=int(args.get("limit") or 60),
+    )
+
+
+def _tool_get_test_drive_enquiries(args: dict) -> Any:
+    from .test_drives import agent_test_drive_enquiries
+    return agent_test_drive_enquiries(
+        car=args.get("car"),
+        include_samples=_yes(args.get("include_samples")),
+        limit=int(args.get("limit") or 60),
+    )
 
 
 TOOLS: list[dict] = [
     {
         "name": "get_dealership_snapshot",
-        "description": "One-call summary of how the dealership is doing this reporting month: leads, bookings, retails, targets.",
+        "description": "One-call summary of how the dealership is doing in the reporting month the dashboard is set to: leads, bookings, retails, targets. For today or a particular day, use get_leads, get_bookings or get_test_drives with a date.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
@@ -183,27 +217,62 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_leads",
-        "description": "Enquiries/leads for the active (or a named) reporting month. Optionally filter by status or search name/mobile.",
+        "description": "Enquiries/leads, live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "date": {"type": "string", "description": "One day: 'today', 'yesterday' or YYYY-MM-DD (India time)"},
+                "date_from": {"type": "string", "description": "First day of a span, as for date"},
+                "date_to": {"type": "string", "description": "Last day of a span, as for date"},
                 "limit": {"type": "integer", "description": "Max rows, default 50"},
-                "status": {"type": "string", "description": "Lead status, default 'New'"},
-                "period": {"type": "string", "description": "'active' (default), a month label like 'AUG2026', or 'all'"},
+                "status": {"type": "string", "description": "Lead status, default 'New'; 'all' for every status"},
+                "period": {"type": "string", "description": "'active' (default), a month label like 'OCT2026', or 'all'. Ignored when a date is given"},
                 "search": {"type": "string", "description": "Matches lead name or mobile"},
             },
         },
     },
     {
         "name": "get_bookings",
-        "description": "Orders/bookings for the active (or a named) reporting month. Optionally filter by fulfilment status or search customer name/mobile.",
+        "description": "Orders/bookings, live from the database. For a day or days pass date or date_from/date_to (on the booking date), whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by fulfilment status or search customer name/mobile.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "date": {"type": "string", "description": "One day: 'today', 'yesterday' or YYYY-MM-DD (India time)"},
+                "date_from": {"type": "string", "description": "First day of a span, as for date"},
+                "date_to": {"type": "string", "description": "Last day of a span, as for date"},
                 "limit": {"type": "integer", "description": "Max rows, default 50"},
-                "period": {"type": "string", "description": "'active' (default), a month label like 'AUG2026', or 'all'"},
+                "period": {"type": "string", "description": "'active' (default), a month label like 'OCT2026', or 'all'. Ignored when a date is given"},
                 "search": {"type": "string", "description": "Matches customer name or mobile"},
                 "status": {"type": "string", "description": "fulfilment_status: BOOKED / NO_STOCK / ALLOTED / RETAILED / CANCELLED"},
+            },
+        },
+    },
+    {
+        "name": "get_test_drives",
+        "description": "Test drives from the dashboard's Test Drives section, live from the database: booked, attended, no-show and cancelled drives with day, time, car, customer, executive and place, plus test-drive enquiries. For one day (default today) or a span of up to 62 days. Also returns the section's headline figures. Drives marked sample=true are made-up demo drives.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "One day: 'today' (default), 'tomorrow', 'yesterday' or YYYY-MM-DD"},
+                "date_from": {"type": "string", "description": "First day of a span, as for date"},
+                "date_to": {"type": "string", "description": "Last day of a span, as for date"},
+                "status": {"type": "string", "description": "booked, attended, no_show, cancelled or enquiry; omit for all"},
+                "car": {"type": "string", "description": "Taigun, Virtus, Tayron, Tiguan R-Line or Golf GTI"},
+                "search": {"type": "string", "description": "Customer name, or 4+ digits of their phone"},
+                "include_samples": {"type": "boolean", "description": "Include the made-up sample drives (default true)"},
+                "limit": {"type": "integer", "description": "Max drives listed, default 60"},
+            },
+        },
+    },
+    {
+        "name": "get_test_drive_enquiries",
+        "description": "Test-drive enquiries waiting for a time, live from the database: customers who asked for a test drive with no slot booked yet, with the day and time they asked for and the day the enquiry came in.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "car": {"type": "string", "description": "Taigun, Virtus, Tayron, Tiguan R-Line or Golf GTI"},
+                "include_samples": {"type": "boolean", "description": "Include the made-up sample enquiries (default true)"},
+                "limit": {"type": "integer", "description": "Max enquiries listed, default 60"},
             },
         },
     },
@@ -218,6 +287,8 @@ TOOL_HANDLERS: dict[str, Callable[[dict], Any]] = {
     "get_model_catalogue": _tool_get_model_catalogue,
     "get_leads": _tool_get_leads,
     "get_bookings": _tool_get_bookings,
+    "get_test_drives": _tool_get_test_drives,
+    "get_test_drive_enquiries": _tool_get_test_drive_enquiries,
 }
 
 
@@ -233,8 +304,17 @@ def _rpc_error(id_: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}}
 
 
-@router.post("")
-def mcp_rpc(body: JsonRpcRequest) -> dict:
+@router.post("", response_model=None)
+def mcp_rpc(body: JsonRpcRequest) -> dict | Response:
+    # A notification - notifications/initialized, sent once the handshake is
+    # done - wants no answer: Streamable HTTP expects 202 and an empty body,
+    # where an error reply can make a client drop the connection.
+    if body.method.startswith("notifications/"):
+        return Response(status_code=202)
+
+    if body.method == "ping":
+        return _rpc_result(body.id, {})
+
     if body.method == "initialize":
         return _rpc_result(body.id, {
             "protocolVersion": "2024-11-05",
@@ -243,7 +323,10 @@ def mcp_rpc(body: JsonRpcRequest) -> dict:
         })
 
     if body.method == "tools/list":
-        return _rpc_result(body.id, {"tools": TOOLS})
+        # The MCP spec names a tool's parameters inputSchema; this server has
+        # always sent input_schema. Both, so a client reading either - Perfox,
+        # an MCP proxy - sees what each tool takes.
+        return _rpc_result(body.id, {"tools": [{**t, "inputSchema": t["input_schema"]} for t in TOOLS]})
 
     if body.method == "tools/call":
         params = body.params or {}

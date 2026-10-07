@@ -526,3 +526,159 @@ def enquiries(calls: bool = Query(True, description="Also read the call log (slo
             "summary": summary,
         })
     return {"waiting": waiting, "requests": out}
+
+
+# ------------------------------------------------------------ for the agents
+#
+# The same drives, read for the dashboard's AI agent (app/mcp_server.py) in
+# the words the section uses. A sample drive is flagged, and the agent is told
+# what that means.
+
+_STATUS_WORDS = {
+    "booked": "booked", "attended": "attended", "cancelled": "cancelled", "canceled": "cancelled",
+    "no_show": "no_show", "noshow": "no_show", "no-show": "no_show", "missed": "no_show",
+    "enquiry": "requested", "enquiries": "requested", "requested": "requested", "waiting": "requested",
+}
+_LABELS = {"booked": "Booked", "attended": "Attended", "no_show": "No-show",
+           "cancelled": "Cancelled", "requested": "Enquiry"}
+_SAMPLES_NOTE = ("Drives with sample=true are made-up drives that fill the calendar for showing the "
+                 "section, not real customers. Say so whenever you mention one.")
+
+
+def _agent_day(value: str | None, default: date) -> date:
+    """'today', 'tomorrow', 'yesterday' or YYYY-MM-DD, in India's calendar."""
+    if not value or not str(value).strip():
+        return default
+    v = str(value).strip().lower()
+    shift = {"today": 0, "tomorrow": 1, "yesterday": -1}
+    if v in shift:
+        return _now().date() + timedelta(days=shift[v])
+    try:
+        return date.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(400, f"Not a day: {value!r}. Use today, tomorrow, yesterday or YYYY-MM-DD.")
+
+
+def _car_named(name: str, cars: dict[str, str]) -> str:
+    want = name.strip().lower()
+    for cid, cname in cars.items():
+        if want in (cid, cname.lower()) or cname.lower().startswith(want) or want.startswith(cid):
+            return cid
+    raise HTTPException(400, f"No demo car called {name!r}. The cars: {', '.join(cars.values())}.")
+
+
+def _agent_row(d: dict, cars: dict[str, str]) -> dict:
+    missed = d["status"] == "no_show" and not d["start"]
+    waiting = d["status"] == "requested"
+    return {
+        "date": d["date"],                              # None: an enquiry with no day yet
+        "time": d["start"],
+        "asked_for": d["asked_time"] if not d["start"] else None,
+        "car": cars.get(d["car_id"], "Model not recorded"),
+        "customer": d["customer"],
+        "phone": d["phone"] or None,
+        "executive": d["consultant"] or None,
+        "place": f"Home: {d['address']}" if d["location"] == "Home" and d["address"] else d["location"],
+        "status": "No-show (enquiry whose day passed with no booking)" if missed
+                  else _LABELS.get(d["status"], d["status"]),
+        "booked_by": d["source"],
+        "enquiry_came_in": d["enquired_on"] if waiting or missed else None,
+        "sample": d["sample"],
+        "note": (d["note"] or "")[:240] or None,
+    }
+
+
+def _headline(samples: bool, cars: dict[str, str]) -> dict:
+    head = stats(samples=samples)
+    if head.get("next"):
+        head["next"]["car"] = cars.get(head["next"].pop("car_id"), "Model not recorded")
+    return head
+
+
+def agent_test_drives(date_: str | None = None, date_from: str | None = None, date_to: str | None = None,
+                      status: str | None = None, car: str | None = None, search: str | None = None,
+                      include_samples: bool = True, limit: int = 60) -> dict:
+    """Test drives on a day or a span of days (default today), as the calendar
+    shows them: drives in their slots, and enquiries on the day they ask for
+    or, with no day yet, the day they came in. Filters: status, car, and a
+    customer's name or phone. With the section's headline figures."""
+    today = _now().date()
+    lo = _agent_day(date_from or date_, today)
+    hi = _agent_day(date_to or date_, lo)
+    if hi < lo:
+        lo, hi = hi, lo
+    if (hi - lo).days > 62:
+        raise HTTPException(400, "Ask for 62 days or fewer at a time.")
+    where, params = ["on_day BETWEEN %s AND %s"], [lo, hi]
+    if status and status.strip().lower() not in ("all", "any"):
+        s = _STATUS_WORDS.get(status.strip().lower().replace(" ", "_"))
+        if not s:
+            raise HTTPException(400, "status is one of booked, attended, no_show, cancelled or enquiry.")
+        where.append("status = %s")
+        params.append(s)
+    cars = {c["id"]: c["name"] for c in _cars()}
+    if car and car.strip():
+        where.append("car_id = %s")
+        params.append(_car_named(car, cars))
+    if search and search.strip():
+        text = search.strip()
+        digits = re.sub(r"\D", "", text)
+        like = "%" + re.sub(r"([\\%_])", r"\\\1", text) + "%"
+        if len(digits) >= 4:
+            where.append("customer ILIKE %s OR regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE %s")
+            params += [like, f"%{digits}%"]
+        else:
+            where.append("customer ILIKE %s")
+            params.append(like)
+    with session() as cx:
+        _lapse(cx)
+        rows = _drives(cx, " AND ".join(f"({w})" for w in where), tuple(params), include_samples)
+    rows.sort(key=lambda d: (d["on"], d["start"] or d["asked_time"] or "99:99"))
+    counts: dict[str, int] = {}
+    for d in rows:
+        k = _LABELS.get(d["status"], d["status"])
+        counts[k] = counts.get(k, 0) + 1
+    shown = rows[:max(1, min(int(limit), 200))]
+    out = {
+        "from": lo.isoformat(), "to": hi.isoformat(),
+        "today": today.isoformat(), "time_now": _now().strftime("%H:%M"),
+        "total": len(rows), "counts": counts,
+        "real": sum(not d["sample"] for d in rows), "samples": sum(d["sample"] for d in rows),
+        "drives": [_agent_row(d, cars) for d in shown],
+        "headline": _headline(include_samples, cars),
+    }
+    if len(rows) > len(shown):
+        out["more"] = f"{len(rows) - len(shown)} more not listed: narrow the days or the filters."
+    if out["samples"]:
+        out["samples_note"] = _SAMPLES_NOTE
+    return out
+
+
+def agent_test_drive_enquiries(car: str | None = None, include_samples: bool = True,
+                               limit: int = 60) -> dict:
+    """Test-drive enquiries waiting for a time: a customer asked for a test
+    drive and no slot is booked yet. Soonest asked-for day first, then those
+    with no day yet."""
+    cars = {c["id"]: c["name"] for c in _cars()}
+    where, params = ["status = 'requested'"], []
+    if car and car.strip():
+        where.append("car_id = %s")
+        params.append(_car_named(car, cars))
+    with session() as cx:
+        _lapse(cx)
+        rows = _drives(cx, " AND ".join(f"({w})" for w in where), tuple(params), include_samples)
+    rows.sort(key=lambda d: (d["date"] or "9999-12-31", d["enquired_on"]))
+    shown = rows[:max(1, min(int(limit), 200))]
+    out = {
+        "today": _now().date().isoformat(),
+        "total": len(rows),
+        "with_a_day": sum(1 for d in rows if d["date"]),
+        "day_to_confirm": sum(1 for d in rows if not d["date"]),
+        "real": sum(not d["sample"] for d in rows), "samples": sum(d["sample"] for d in rows),
+        "enquiries": [_agent_row(d, cars) for d in shown],
+    }
+    if len(rows) > len(shown):
+        out["more"] = f"{len(rows) - len(shown)} more not listed."
+    if out["samples"]:
+        out["samples_note"] = _SAMPLES_NOTE
+    return out

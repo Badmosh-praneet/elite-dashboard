@@ -81,7 +81,8 @@ const ENQUIRY_ROWS = 8;
 // What an enquiry still waits for, or, once its day has passed with no
 // booking, that the customer did not come. One with no day yet sits on the
 // day it came in.
-const askLabel = x => (x.status === 'no_show' ? `No-show${x.asked_time ? ` · asked for ${x.asked_time}` : ''}`
+const askLabel = x => (x.fromCall ? `From a call${x.when_hint ? ` · asked for ${x.when_hint}` : ''}`
+  : x.status === 'no_show' ? `No-show${x.asked_time ? ` · asked for ${x.asked_time}` : ''}`
   : !x.date ? 'Day to confirm' : x.asked_time ? `Asked for ${x.asked_time}` : 'Time to confirm');
 
 /* ---------------------------------------------------------------- dialogs */
@@ -567,7 +568,7 @@ function WeekView({ setup, day, drives, enquiries, carOf, onDay, onJump }) {
    someone gives it a time. The month bar's figures switch each status on and
    off; car, executive and sample filters narrow the strip, the day and the
    week alike. */
-function Calendar({ setup, drives, month, setMonth, day, setDay, onSlot, onOpen, onPick,
+function Calendar({ setup, drives, calls = [], month, setMonth, day, setDay, onSlot, onOpen, onCall, onPick,
                     view, setView, show, setShow, car, setCar, exec, setExec, samples, setSamples,
                     loading, loadError, onRetry }) {
   const strip = useMemo(() => Array.from({ length: daysIn(month) }, (_, i) => isoAdd(month, i)), [month]);
@@ -585,8 +586,22 @@ function Calendar({ setup, drives, month, setMonth, day, setDay, onSlot, onOpen,
   // A no-show with no slot is an enquiry whose day passed with no booking. It
   // never held a slot, so it stays in its car's Enquiries lane, in red.
   const missed = visible.filter(x => x.status === 'no_show' && !x.start);
+  /* A test drive promised on a call with nothing saved for the caller - the
+     Enquiries tab's second list, read from the agent's call log - is an
+     enquiry too: on the day of the call, until someone schedules it. It has
+     no executive, so an executive filter leaves it out. */
+  const promised = exec || !show.includes('requested') ? [] : calls
+    .filter(r => r.called_at && (!car || r.car_id === car))
+    .map(r => ({
+      id: `call-${r.call_id}`, fromCall: r, status: 'requested', car_id: r.car_id || null,
+      on: new Date(r.called_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
+      date: null, start: null, asked_time: null, when_hint: r.when_hint,
+      customer: r.name || 'Unknown caller', phone: r.phone || '', source: 'AI agent',
+      location: 'Showroom', address: '', consultant: '', sample: false,
+    }));
   // Every enquiry has a day here (`on`): the one it asks for, or the one it came in on.
-  const enquiries = visible.filter(x => x.status === 'requested');
+  const enquiries = [...visible.filter(x => x.status === 'requested'), ...promised];
+  const openEntry = x => (x.fromCall ? onCall(x.fromCall) : onOpen(x));
 
   // Each day's counts for the strip, from what is showing.
   const tally = {};
@@ -599,6 +614,7 @@ function Calendar({ setup, drives, month, setMonth, day, setDay, onSlot, onOpen,
   // switches: a status switched off still says how many it is hiding.
   const inMonth = x => x.on >= month && x.on < addMonths(month, 1);
   const totals = Object.fromEntries(SHOWN.map(s => [s, scoped.filter(x => inMonth(x) && x.status === s).length]));
+  totals.requested += promised.filter(inMonth).length;
   const execs = [...new Set(drives.map(x => x.consultant).filter(Boolean).concat(exec ? [exec] : []))].sort();
   const filtered = !!car || !!exec || SHOWN.some(s => show.includes(s) !== (s !== 'cancelled'));
   const toggle = s => setShow(v => (v.includes(s) ? v.filter(x => x !== s) : [...v, s]));
@@ -668,9 +684,11 @@ function Calendar({ setup, drives, month, setMonth, day, setDay, onSlot, onOpen,
       <div className="tdb-lane-in">
         <span className="tdb-lane-tag">Enquiries</span>
         {list.map(x => (
-          <button key={x.id} type="button" className={`tdb-entry ${x.sample ? 'is-sample' : ''}`} data-status={x.status}
-                  onClick={() => onOpen(x)}
-                  title={`${x.customer} · ${x.status === 'no_show' ? 'enquiry, day passed with no booking' : 'enquiry'} · ${askLabel(x).toLowerCase()}${x.date ? '' : ` · came in ${shortDate(x.enquired_on)}`}`}>
+          <button key={x.id} type="button" className={`tdb-entry ${x.sample ? 'is-sample' : ''}`}
+                  data-status={x.fromCall ? 'call' : x.status} onClick={() => openEntry(x)}
+                  title={x.fromCall
+                    ? `${x.customer} · test drive promised on a call, not saved yet · click to schedule`
+                    : `${x.customer} · ${x.status === 'no_show' ? 'enquiry, day passed with no booking' : 'enquiry'} · ${askLabel(x).toLowerCase()}${x.date ? '' : ` · came in ${shortDate(x.enquired_on)}`}`}>
             <b>{x.customer}</b>
             <span>{askLabel(x)}</span>
           </button>
@@ -868,12 +886,16 @@ function Calendar({ setup, drives, month, setMonth, day, setDay, onSlot, onOpen,
                     <div><b>{x.customer}</b> &middot; {carById(x.car_id)?.name || 'Model not recorded'}
                       {x.sample && <span className="tdb-samplechip">Sample</span>}</div>
                     <div className="tdb-meta">
-                      {[x.location === 'Home' ? `Home${x.address ? `: ${x.address}` : ''}` : 'Showroom',
-                        x.phone, x.source, askLabel(x).toLowerCase()].filter(Boolean).join(' · ')}
+                      {(x.fromCall
+                        ? [x.phone, 'promised on a call, not saved yet', x.when_hint && `asked for ${x.when_hint}`]
+                        : [x.location === 'Home' ? `Home${x.address ? `: ${x.address}` : ''}` : 'Showroom',
+                           x.phone, x.source, askLabel(x).toLowerCase()]).filter(Boolean).join(' · ')}
                     </div>
                   </div>
-                  <span className="tdb-pill" data-status="requested">Enquiry</span>
-                  <button type="button" className="rail-quiet" onClick={() => onOpen(x)}>Open</button>
+                  <span className="tdb-pill" data-status="requested">{x.fromCall ? 'From a call' : 'Enquiry'}</span>
+                  <button type="button" className="rail-quiet" onClick={() => openEntry(x)}>
+                    {x.fromCall ? 'Schedule' : 'Open'}
+                  </button>
                 </div>
               ))}
             </div>
@@ -1165,6 +1187,7 @@ export default function TestDriveBoard({ refreshKey }) {
 
       {tab === 'calendar' && (
         <Calendar setup={setup} drives={drives} month={month} setMonth={setMonth} day={day} setDay={setDay}
+                  calls={queue.requests} onCall={scheduleCall}
                   onSlot={bookSlot} onOpen={setOpened} onPick={pick}
                   view={view} setView={setView} show={show} setShow={setShow}
                   car={car} setCar={setCar} exec={exec} setExec={setExec}

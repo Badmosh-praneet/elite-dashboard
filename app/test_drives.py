@@ -595,16 +595,43 @@ def _headline(samples: bool, cars: dict[str, str]) -> dict:
     return head
 
 
+_COUNTING = ("bookings = drives given a slot: booked, attended or no-show. Cancelled drives, enquiries "
+             "waiting for a time, and missed enquiries (the asked-for day passed with no booking) are "
+             "counted apart from them. 'real' are customers' drives; 'samples' are made up for "
+             "demonstrations.")
+
+
+def _tally(rows: list[dict]) -> dict:
+    """A set of drives counted the way the section reads them."""
+    slot = [d for d in rows if d["status"] in ("booked", "attended", "no_show") and d["start"]]
+    return {
+        "total": len(rows),
+        "bookings": len(slot),
+        "booked_upcoming": sum(1 for d in slot if d["status"] == "booked"),
+        "attended": sum(1 for d in slot if d["status"] == "attended"),
+        "no_show": sum(1 for d in slot if d["status"] == "no_show"),
+        "cancelled": sum(1 for d in rows if d["status"] == "cancelled"),
+        "enquiries_waiting": sum(1 for d in rows if d["status"] == "requested"),
+        "missed_enquiries": sum(1 for d in rows if d["status"] == "no_show" and not d["start"]),
+    }
+
+
 def agent_test_drives(date_: str | None = None, date_from: str | None = None, date_to: str | None = None,
                       status: str | None = None, car: str | None = None, search: str | None = None,
-                      include_samples: bool = True, limit: int = 60) -> dict:
-    """Test drives on a day or a span of days (default today), as the calendar
-    shows them: drives in their slots, and enquiries on the day they ask for
-    or, with no day yet, the day they came in. Filters: status, car, and a
-    customer's name or phone. With the section's headline figures."""
+                      include_samples: bool = True, limit: int = 60, month: str | None = None) -> dict:
+    """Test drives on a day, a span of days or a month (default today), as the
+    calendar shows them: drives in their slots, and enquiries on the day they
+    ask for or, with no day yet, the day they came in. Filters: status, car,
+    and a customer's name or phone. Counted for real drives and for samples
+    apart, with the section's headline figures."""
     today = _now().date()
-    lo = _agent_day(date_from or date_, today)
-    hi = _agent_day(date_to or date_, lo)
+    if month and not (date_ or date_from or date_to):
+        from .agent_insights import resolve_month
+        m = resolve_month(month)
+        lo, hi = date.fromisoformat(m["from"]), date.fromisoformat(m["to"])
+    else:
+        lo = _agent_day(date_from or date_, today)
+        hi = _agent_day(date_to or date_, lo)
     if hi < lo:
         lo, hi = hi, lo
     if (hi - lo).days > 62:
@@ -634,23 +661,22 @@ def agent_test_drives(date_: str | None = None, date_from: str | None = None, da
         _lapse(cx)
         rows = _drives(cx, " AND ".join(f"({w})" for w in where), tuple(params), include_samples)
     rows.sort(key=lambda d: (d["on"], d["start"] or d["asked_time"] or "99:99"))
-    counts: dict[str, int] = {}
-    for d in rows:
-        k = _LABELS.get(d["status"], d["status"])
-        counts[k] = counts.get(k, 0) + 1
+    # Real drives listed first, so a limit never hides a customer behind samples.
+    rows.sort(key=lambda d: d["sample"])
     shown = rows[:max(1, min(int(limit), 200))]
     out = {
         "from": lo.isoformat(), "to": hi.isoformat(),
         "today": today.isoformat(), "time_now": _now().strftime("%H:%M"),
-        "total": len(rows), "counts": counts,
-        "real": sum(not d["sample"] for d in rows), "samples": sum(d["sample"] for d in rows),
+        "counting": _COUNTING,
+        "real": _tally([d for d in rows if not d["sample"]]),
         "drives": [_agent_row(d, cars) for d in shown],
         "headline": _headline(include_samples, cars),
     }
+    if include_samples:
+        out["samples"] = _tally([d for d in rows if d["sample"]])
+        out["samples_note"] = _SAMPLES_NOTE
     if len(rows) > len(shown):
         out["more"] = f"{len(rows) - len(shown)} more not listed: narrow the days or the filters."
-    if out["samples"]:
-        out["samples_note"] = _SAMPLES_NOTE
     return out
 
 
@@ -668,6 +694,7 @@ def agent_test_drive_enquiries(car: str | None = None, include_samples: bool = T
         _lapse(cx)
         rows = _drives(cx, " AND ".join(f"({w})" for w in where), tuple(params), include_samples)
     rows.sort(key=lambda d: (d["date"] or "9999-12-31", d["enquired_on"]))
+    rows.sort(key=lambda d: d["sample"])          # real enquiries first
     shown = rows[:max(1, min(int(limit), 200))]
     out = {
         "today": _now().date().isoformat(),
@@ -681,4 +708,24 @@ def agent_test_drive_enquiries(car: str | None = None, include_samples: bool = T
         out["more"] = f"{len(rows) - len(shown)} more not listed."
     if out["samples"]:
         out["samples_note"] = _SAMPLES_NOTE
+    # Test drives promised on a call with nothing saved for the caller: the
+    # Enquiries tab's second list, read from the agent's call log.
+    try:
+        promised = enquiries(calls=True, samples=False).get("requests", [])
+    except Exception:                      # the call log is out of reach: say nothing of it
+        promised = []
+    if car and car.strip():
+        promised = [r for r in promised if r.get("car_id") == _car_named(car, cars)]
+    out["promised_on_calls"] = [{
+        "customer": r.get("name") or "Unknown caller",
+        "phone": r.get("phone") or None,
+        "car": cars.get(r.get("car_id"), "Not named"),
+        "call_day": (r.get("called_at") or "")[:10] or None,
+        "asked_for": r.get("when_hint"),
+        "summary": (r.get("summary") or "")[:240] or None,
+    } for r in promised]
+    if promised:
+        out["promised_note"] = ("promised_on_calls are calls where the agent discussed or promised a test drive "
+                                "and nothing was saved for the caller. They are not in the database yet; the "
+                                "team schedules them from the Test Drives page.")
     return out

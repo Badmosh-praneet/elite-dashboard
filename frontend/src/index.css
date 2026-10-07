@@ -863,6 +863,8 @@ td.num, th.num { text-align: right; }
 /* An enquiry whose day passed with no booking: a no-show, in the no-show red. */
 .tdb-entry[data-status="no_show"] { --k: var(--critical); }
 .tdb-entry[data-status="no_show"] span { color: var(--critical); }
+/* A test drive promised on a call, not saved yet: an enquiry, set in italics. */
+.tdb-entry[data-status="call"] span { font-style: italic; }
 /* A test drive filtered out still holds its slot. */
 .tdb-block.is-dim { opacity: 0.35; }
 /* The week in view, picked out in the strip. */

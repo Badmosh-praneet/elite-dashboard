@@ -156,37 +156,40 @@ _LEAD_TYPES = {"test_drive": "Test drive", "general_enquiry": "General enquiry",
 
 def _one_line_per_enquiry(rows: list[dict]) -> dict:
     """The phone agent saves one lead per need, so a caller who wants to order
-    a Virtus and test-drive it becomes two leads seconds apart - and a list
-    showed the same person twice. Leads from one customer (phone and first
-    name: test calls put several names on one number) for the same car on the
-    same day are one line here, saying how many leads it holds and what each
-    asked for. The database keeps both, and the dashboard counts both."""
+    a Virtus and test-drive it - or asks about two cars - becomes two leads
+    seconds apart, and a list showed the same person twice. Leads from one
+    customer (phone and first name: test calls put several names on one
+    number) on the same day are one line here, naming every car and saying
+    how many leads it holds and what each asked for. The database keeps them
+    all, and the dashboard counts each."""
     lines: list[dict] = []
     by_key: dict[tuple, dict] = {}
     for r in rows:
         model = r.get("model") or r.get("model_of_interest")   # a model the catalogue did not match
         phone = re.sub(r"\D", "", r.get("mobile") or "")[-10:]
         first = (r.get("lead_name") or "").strip().split(" ")[0].lower()
-        key = (phone or (r.get("lead_name") or "").strip().lower(), first,
-               (model or "").strip().upper(), str(r.get("created_at") or "")[:10])
-        need = {"lead_id": r.get("lead_id"),
+        key = (phone or (r.get("lead_name") or "").strip().lower(), first, str(r.get("created_at") or "")[:10])
+        need = {"lead_id": r.get("lead_id"), "car": model,
                 "type": _LEAD_TYPES.get(r.get("lead_type") or "", r.get("lead_type")),
                 "note": r.get("enquiry_note")}
         line = by_key.get(key)
         if line:
             line["leads"] += 1
             line["needs"].append(need)
+            if model and model.upper() not in (m.upper() for m in line["cars"]):
+                line["cars"].append(model)
+                line["model"] = ", ".join(line["cars"])
             continue
         line = {k: v for k, v in r.items() if k not in ("model_of_interest", "lead_type", "enquiry_note")}
-        line.update(model=model, leads=1, needs=[need])
+        line.update(model=model, cars=[model] if model else [], leads=1, needs=[need])
         by_key[key] = line
         lines.append(line)
     return {
         "customers": len(lines),
         "leads": len(rows),
-        "note": ("One line per customer, car and day. 'leads' on a line is how many leads it holds - "
-                 "a caller who asked for two things in one call is saved as two leads, and the "
-                 "dashboard counts both."),
+        "note": ("One line per customer per day. 'leads' on a line is how many leads it holds - a caller "
+                 "who asked for two things, or about two cars, is saved as two leads, and the dashboard "
+                 "counts both. 'model' names every car on the line."),
         "lines": lines,
     }
 
@@ -221,6 +224,7 @@ def _tool_get_test_drives(args: dict) -> Any:
         search=args.get("search"),
         include_samples=_yes(args.get("include_samples")),
         limit=int(args.get("limit") or 60),
+        month=args.get("month"),
     )
 
 
@@ -302,7 +306,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_leads",
-        "description": "Enquiries/leads, live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile. Leads from one customer for the same car on the same day come as one line, with how many leads it holds and what each asked for - list lines, not leads. For counts use get_leads_summary.",
+        "description": "Enquiries/leads, live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile. Leads from one customer on the same day come as one line, naming every car, with how many leads it holds and what each asked for - list lines, not leads. For counts use get_leads_summary.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -371,13 +375,14 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_test_drives",
-        "description": "Test drives from the dashboard's Test Drives section, live from the database: booked, attended, no-show and cancelled drives with day, time, car, customer, executive and place, plus test-drive enquiries. For one day (default today) or a span of up to 62 days. Also returns the section's headline figures. Drives marked sample=true are made-up demo drives.",
+        "description": "Test drives from the dashboard's Test Drives section, live from the database, for a day (default today), a span of up to 62 days, or a month: each drive with day, time, car, customer, executive, place and status, plus test-drive enquiries. Counts come ready-made for real drives and for samples apart: bookings (drives given a slot: booked, attended or no-show), cancelled, enquiries waiting and missed enquiries. Also the section's headline figures.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "date": {"type": "string", "description": "One day: 'today' (default), 'tomorrow', 'yesterday' or YYYY-MM-DD"},
                 "date_from": {"type": "string", "description": "First day of a span, as for date"},
                 "date_to": {"type": "string", "description": "Last day of a span, as for date"},
+                "month": {"type": "string", "description": "A whole month instead: 'current' (this calendar month), 'last', or a month name or label like 'October' / 'OCT2026'"},
                 "status": {"type": "string", "description": "booked, attended, no_show, cancelled or enquiry; omit for all"},
                 "car": {"type": "string", "description": "Taigun, Virtus, Tayron, Tiguan R-Line or Golf GTI"},
                 "search": {"type": "string", "description": "Customer name, or 4+ digits of their phone"},
@@ -388,7 +393,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_test_drive_enquiries",
-        "description": "Test-drive enquiries waiting for a time, live from the database: customers who asked for a test drive with no slot booked yet, with the day and time they asked for and the day the enquiry came in.",
+        "description": "Test-drive enquiries waiting for a time, live from the database: customers who asked for a test drive with no slot booked yet, with the day and time they asked for and the day the enquiry came in. Also promised_on_calls: calls where the agent promised a test drive and nothing was saved for the caller.",
         "input_schema": {
             "type": "object",
             "properties": {

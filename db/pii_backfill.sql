@@ -65,6 +65,23 @@ UPDATE dsr.allotment
  WHERE remarks       IS DISTINCT FROM dsr.pii_scrub(remarks)
     OR customer_name IS DISTINCT FROM dsr.pii_scrub(customer_name);
 
+-- The test-drive board stores a phone and, for drives at the customer's home,
+-- an address (db/test_drives.sql). Skipped if that file was never applied.
+DO $$
+BEGIN
+    IF to_regclass('dsr.test_drive_booking') IS NOT NULL THEN
+        UPDATE dsr.test_drive_booking
+           SET phone    = dsr.pii_redact(phone),
+               address  = dsr.pii_redact(address),
+               customer = dsr.pii_scrub(customer),
+               note     = dsr.pii_scrub(note)
+         WHERE phone    IS DISTINCT FROM dsr.pii_redact(phone)
+            OR address  IS DISTINCT FROM dsr.pii_redact(address)
+            OR customer IS DISTINCT FROM dsr.pii_scrub(customer)
+            OR note     IS DISTINCT FROM dsr.pii_scrub(note);
+    END IF;
+END $$;
+
 DO $$
 BEGIN
     IF to_regclass('public.enquiries') IS NOT NULL THEN

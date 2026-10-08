@@ -30,7 +30,7 @@ from .db import (is_db_ready, fetch_all, pool, DSN, ensure_pool_open,
                  connect as db_connect, session)
 from .events import broker
 from etl.dimensions import activate_period, report_period
-from etl.load_dsr import Loader
+from etl.load_dsr import Loader, workbook_problem
 from .write import (AllotmentIn, BookingIn, BookingPatch, LeadIn, RegistrationIn,
                     TestDriveIn, VehicleIn, create_allotment, create_booking,
                     create_lead, create_registration, create_test_drive,
@@ -360,35 +360,25 @@ def period_contents(label: str):
             (pid,)).fetchone()["n"] + cx.execute(
             "SELECT count(*) AS n FROM booking WHERE origin = 'MANUAL' AND period_id = %s",
             (pid,)).fetchone()["n"]
-
-        # FIX (2026-10-08): the upload dialog used `counts`/`hand_entered` above
-        # to warn what a REPLACE upload would remove - but those describe
-        # deleting or emptying the month, which is a different and larger set.
-        # A replace upload (Loader.reset) removes only the WORKBOOK rows that
-        # this month's own previous upload produced, plus the month's targets,
-        # and keeps hand-entered rows. So the dialog told people their
-        # hand-entered rows would be lost when they would not, and overstated
-        # the row count. This is the set reset() actually deletes.
-        on_upload = {}
+        # What uploading a workbook in its place removes - less than deleting
+        # the month: a replace clears only what a workbook loaded into it, and
+        # keeps the rows typed into the dashboard (see Loader.reset). The
+        # upload panel showed the delete figures and said the hand-entered rows
+        # would be replaced too; they never were.
+        replaces = {}
         for table in PERIOD_FACTS:
-            on_upload[table] = cx.execute(
-                f"SELECT count(*) AS n FROM {table} "
-                f"WHERE origin = 'WORKBOOK' AND load_period_id = %s",
-                (pid,)).fetchone()["n"]
-        for table in PERIOD_TARGET_TABLES:
-            on_upload[table] = cx.execute(
-                f"SELECT count(*) AS n FROM {table} WHERE period_id = %s",
-                (pid,)).fetchone()["n"]
-
+            n = cx.execute(f"SELECT count(*) AS n FROM {table} "
+                           f"WHERE origin = 'WORKBOOK' AND load_period_id = %s", (pid,)).fetchone()["n"]
+            if n:
+                replaces[table] = n
         return {
             "label": row["label"],
             "is_active": row["is_active"],
             "counts": {k: v for k, v in counts.items() if v},
             "total": sum(counts.values()),
             "hand_entered": manual,
-            "replaced_by_upload": {k: v for k, v in on_upload.items() if v},
-            "replaced_by_upload_total": sum(on_upload.values()),
-            "kept_on_upload": manual,
+            "replaces": replaces,
+            "replaces_total": sum(replaces.values()),
         }
 
 
@@ -552,6 +542,19 @@ def _job_get(job_id: str) -> dict | None:
         return dict(job) if job else None
 
 
+def _upload_problem(content: bytes) -> str | None:
+    """Why an uploaded file cannot be loaded as a DSR workbook, or None. Reads
+    the tab names only, so it answers in a moment."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+    except Exception as exc:
+        return f"Could not open the file as an Excel workbook ({exc}). Save it as .xlsx and try again."
+    try:
+        return workbook_problem(wb)
+    finally:
+        wb.close()
+
+
 def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
                    period_start: date, period_end: date, uploaded_by: str,
                    mode: str = "replace") -> None:
@@ -636,6 +639,10 @@ async def start_upload(
     content = await file.read()
     if not content:
         raise HTTPException(400, "Uploaded file is empty.")
+    # Before anything is queued - and so before a replace touches the month.
+    problem = _upload_problem(content)
+    if problem:
+        raise HTTPException(400, problem)
     if not is_db_ready():
         raise HTTPException(503, "The database is not reachable.")
 
@@ -804,6 +811,9 @@ async def upload_dsr_workbook(
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
     except Exception as exc:
         raise HTTPException(400, f"Could not parse Excel workbook: {exc}")
+    problem = workbook_problem(wb)
+    if problem:
+        raise HTTPException(400, problem)
 
     if is_db_ready():
         try:

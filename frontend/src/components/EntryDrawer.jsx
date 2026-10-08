@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import useClosing from './useClosing';
 import { X, Send, AlertCircle } from 'lucide-react';
 import { sendJson } from '../api/client';
 
@@ -76,7 +77,8 @@ export default function EntryDrawer({
     setFormData(initial);
   }, [currentTab, isOpen]);
 
-  if (!isOpen) return null;
+  const { render, leaving } = useClosing(isOpen);
+  if (!render) return null;
 
   const handleChange = (name, value) => {
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -136,12 +138,13 @@ export default function EntryDrawer({
 
   return (
     <>
-      <div className="drawer-scrim" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label="Direct Data Entry Drawer">
+      <div className={`drawer-scrim ${leaving ? 'is-leaving' : ''}`} onClick={onClose} />
+      <aside className={`drawer ${leaving ? 'is-leaving' : ''}`}
+             role="dialog" aria-label="Direct Data Entry Drawer">
         <div className="drawer-head">
           <div>
-            <h2 style={{ fontSize: '17px', fontWeight: '800' }}>Direct Cloud Data Entry</h2>
-            <p style={{ margin: '2px 0 0', color: 'var(--ink-muted)', fontSize: '12px' }}>
+            <h2 style={{ fontSize: 'var(--fs-head)', fontWeight: '800' }}>Direct Cloud Data Entry</h2>
+            <p style={{ margin: '2px 0 0', color: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }}>
               Saves straight to Supabase cloud PostgreSQL.
             </p>
             {/* PII POLICY (2026-10-08): customer phone numbers, emails and
@@ -178,7 +181,7 @@ export default function EntryDrawer({
                 borderRadius: '8px',
                 padding: '10px 14px',
                 color: 'var(--critical)',
-                fontSize: '12.5px',
+                fontSize: 'var(--fs-small)',
                 marginBottom: '14px',
                 display: 'flex',
                 alignItems: 'center',

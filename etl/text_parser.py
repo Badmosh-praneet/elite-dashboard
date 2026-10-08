@@ -411,8 +411,10 @@ def ingest_text_report(
                 def get_val(idx: int | None):
                     return r[idx].strip() if idx is not None and idx < len(r) and r[idx].strip() else None
 
-                chassis = nz.upper(get_val(col_chassis))
-                if not chassis:
+                chassis = nz.chassis(get_val(col_chassis))
+                if not chassis:        # blank, or not a chassis number: never a new "car"
+                    if get_val(col_chassis):
+                        counts["vehicle_skipped_not_chassis"] = counts.get("vehicle_skipped_not_chassis", 0) + 1
                     continue
 
                 # FIX (2026-10-08): a car with no model was stocked as a TAIGUN,

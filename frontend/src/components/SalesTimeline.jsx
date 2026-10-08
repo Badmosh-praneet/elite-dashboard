@@ -25,7 +25,7 @@ const GRAINS = [
   { key: 'month', label: 'Month' },
 ];
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 
 /** "2026-08-03" reads as a date, not a label. Shape it for the grain. */
 function tick(key, grain) {
@@ -48,7 +48,7 @@ function Tip({ active, payload, label, grain }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--grid)',
       padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 12,
+      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{heading}</div>
       {payload.map((s, i) => (
@@ -117,14 +117,14 @@ export default function SalesTimeline({ refreshKey }) {
                 onClick={() => setGrain(g.key)}
                 aria-pressed={grain === g.key}
                 className={grain === g.key ? 'primary' : ''}
-                style={{ padding: '4px 12px', fontSize: 12 }}
+                style={{ padding: '4px 12px', fontSize: 'var(--fs-small)' }}
               >
                 {g.label}
               </button>
             ))}
           </div>
         </div>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           {grain === 'month'
             ? 'Every month on record'
             : !data
@@ -144,7 +144,7 @@ export default function SalesTimeline({ refreshKey }) {
           display: 'flex', alignItems: 'flex-start', gap: 8,
           margin: '0 0 14px', padding: '9px 12px',
           border: '1px solid var(--warning)', background: 'var(--critical-light)',
-          fontSize: 11.5, lineHeight: 1.5, color: 'var(--warning)',
+          fontSize: 'var(--fs-small)', lineHeight: 1.5, color: 'var(--warning)',
         }}>
           <AlertTriangle size={14} style={{ flex: 'none', marginTop: 1 }} />
           <span>
@@ -159,12 +159,12 @@ export default function SalesTimeline({ refreshKey }) {
       <div style={{ height: 300, width: '100%' }}>
         {error ? (
           <div style={{ display: 'flex', height: '100%', alignItems: 'center',
-                        justifyContent: 'center', color: 'var(--critical)', fontSize: 13 }}>
+                        justifyContent: 'center', color: 'var(--critical)', fontSize: 'var(--fs-body)' }}>
             {error}
           </div>
         ) : !rows.length ? (
           <div style={{ display: 'flex', height: '100%', alignItems: 'center',
-                        justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 13 }}>
+                        justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 'var(--fs-body)' }}>
             {data ? 'Nothing recorded for this period yet.' : 'Reading the month…'}
           </div>
         ) : (
@@ -179,7 +179,7 @@ export default function SalesTimeline({ refreshKey }) {
               <YAxis axisLine={false} tickLine={false} tick={AXIS} />
               <RechartsTooltip content={props => <Tip {...props} grain={grain} />}
                                cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
-              <Legend wrapperStyle={{ fontSize: 12, color: 'var(--ink-muted)', paddingTop: 10 }}
+              <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: 10 }}
                       iconType="circle"
                       payload={[
                         { value: 'Bookings', type: 'circle', id: 'b', color: 'var(--viz-1)' },

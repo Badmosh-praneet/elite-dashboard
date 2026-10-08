@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -46,6 +47,58 @@ DEFAULT_FILE = Path(__file__).resolve().parent.parent / "DSR August 2026.xlsx"
 # Facts rebuilt from the workbook, in dependency order so the foreign keys never
 # block a reload. Only WORKBOOK-origin rows are cleared - see reset().
 WORKBOOK_FACTS = ["registration", "allotment", "booking", "test_drive", "lead"]
+
+# The workbook tabs the loader reads. The other eight (Free Stock, VW Report,
+# Modewise, Comparision...) are pivots of these and are not read.
+DSR_TABS = ("Stock & Allotted", "Reg Report", "Leads", "TD Leads", "TD", "Booking & Alloted",
+            "Current Month Booking", "Live Booking", "Pending Booking", "Golf & Tiguan R Line Booking",
+            "Alloted", "SC Performance", "Book Comm VS Ach", "Daily Tracker")
+
+
+def _tab_key(name) -> str:
+    """A tab name as typed by hand, compared loosely: case, spacing, '&' or
+    'and', and the workbook's own two spellings of allotted."""
+    t = re.sub(r"\s+", " ", str(name).replace("&", " and ")).strip().casefold()
+    return t.replace("alloted", "allotted")
+
+
+def find_tab(sheetnames, wanted: str) -> str | None:
+    """The workbook's own name for a tab, matched loosely; None if it has none."""
+    if wanted in sheetnames:
+        return wanted
+    key = _tab_key(wanted)
+    return next((n for n in sheetnames if _tab_key(n) == key), None)
+
+
+def workbook_problem(wb) -> str | None:
+    """Why a workbook cannot be loaded as a month's DSR workbook, in words for
+    the person uploading it - or None when it can.
+
+    The dashboard's own Excel export was uploaded to replace a month, and the
+    load died on its first tab with "Worksheet Stock & Allotted does not
+    exist". An export holds the dashboard's figures, not the month's tabs, and
+    cannot be loaded back in - its DSR layout even reuses a few tab names
+    (Leads, Daily Tracker) over columns of its own, so every tab is checked."""
+    names = list(wb.sheetnames)
+    missing = [t for t in DSR_TABS if not find_tab(names, t)]
+    if not missing:
+        return None
+    upload = ("Upload the month's DSR workbook - the one with the Stock & Allotted, "
+              "Booking & Alloted, Reg Report and Leads tabs.")
+    cover = find_tab(names, "Summary")
+    if cover:
+        try:
+            title = str(wb[cover]["A1"].value or "")
+        except Exception:
+            title = ""
+        if "DSR Export" in title:
+            return ("This file is an export from the dashboard - a report of its figures - not a DSR "
+                    "workbook, so it cannot be loaded back in. " + upload)
+    if len(missing) > len(DSR_TABS) // 2:
+        return ("This file is not a DSR workbook: it is missing " + ", ".join(missing)
+                + ". A file exported from the dashboard cannot be loaded back in. " + upload)
+    return ("This workbook is missing tabs the dashboard reads: " + ", ".join(missing)
+            + ". Check they have not been renamed or deleted.")
 
 # Targets belong wholly to the workbook for the period being loaded, so these are
 # cleared by period rather than by origin.
@@ -159,7 +212,7 @@ class Loader:
         No column to 100 but only ~21 rows are filled), so a row only counts when
         its key column is populated.
         """
-        ws = self.wb[sheet]
+        ws = self.wb[self._tab(sheet)]
         try:
             ws.reset_dimensions = True
         except AttributeError:
@@ -184,7 +237,7 @@ class Loader:
         """
         if sheet in self._grids:
             return self._grids[sheet]
-        ws = self.wb[sheet]
+        ws = self.wb[self._tab(sheet)]
         # A workbook that under-reports its own dimensions would otherwise be
         # truncated on read - verified row-for-row against normal mode.
         try:
@@ -195,6 +248,13 @@ class Loader:
         rows.extend(ws.iter_rows(values_only=True))
         self._grids[sheet] = rows
         return rows
+
+    def _tab(self, sheet: str) -> str:
+        """The workbook's own name for a tab (see find_tab), or a plain error."""
+        name = find_tab(self.wb.sheetnames, sheet)
+        if name is None:
+            raise ValueError(workbook_problem(self.wb) or f"The workbook has no '{sheet}' tab.")
+        return name
 
     def one(self, sql: str, params=()) -> int:
         return self.cx.execute(sql, params).fetchone()[0]
@@ -329,6 +389,7 @@ class Loader:
         """
         print("loading vehicles...")
         rows = []
+        not_chassis = 0
         for sheet, header, cols in (
             ("Stock & Allotted", 1, dict(chassis=3, comm=2, engine=4, model_code=5,
                                          long=6, variant=7, my=9, obd=10, options=11,
@@ -342,7 +403,13 @@ class Loader:
                                    status=17, nadcon=23)),
         ):
             for _, cell in self.rows(sheet, header, cols["chassis"]):
-                chassis = nz.upper(cell(cols["chassis"]))
+                chassis = nz.chassis(cell(cols["chassis"]))
+                if not chassis:
+                    # Not a chassis number - a name, say, in a sheet laid out
+                    # differently. Its other columns cannot be trusted either,
+                    # so the row is left out rather than made into a car.
+                    not_chassis += 1
+                    continue
                 model_label = cell(cols["model"])
                 vid = self.variant_id(model_label, cell(cols["variant"]),
                                       long_text=cell(cols["long"]),
@@ -366,7 +433,11 @@ class Loader:
                     nz.as_date(cell(cols["nadcon"])),
                 )
                 rows.append(row)
-        
+        if not_chassis:
+            self.warnings.append(
+                f"Stock: {not_chassis} row(s) skipped - the chassis column held something other "
+                f"than a chassis number (a name, or a shifted column)")
+
         if rows:
             self.fast_executemany("""
                 INSERT INTO vehicle (chassis_number, commission_no, engine_number,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -12,7 +13,67 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import psycopg
+
+def _rescue_libpq_on_windows() -> None:
+    """
+    Find a libpq when psycopg's own has been taken away.
+
+    Endpoint security on Windows quarantines DLLs it does not recognise, and
+    psycopg-binary's bundled libpq is a favourite: the package stays installed
+    with its Python files intact and every DLL gone, so the import fails with
+    "no pq wrapper available - An Application Control policy has blocked this
+    file" and the whole app dies before it reaches a line of its own code.
+
+    A machine with psycopg2 installed almost always still has a working libpq
+    in psycopg2_binary.libs, because that copy was approved separately. It is
+    named for its hash rather than libpq.dll, which is why nothing finds it:
+    psycopg looks the name up with ctypes.util.find_library("libpq.dll"), and
+    that searches PATH for exactly that filename.
+
+    So: look through site-packages for any libpq, put its directory on the
+    search path under the name the loader wants, and let the import try again.
+    Nothing is hardcoded to this machine and nothing runs unless the normal
+    import has already failed - on Linux, and on a healthy Windows box, this
+    function is never called.
+    """
+    import glob
+    import shutil
+    import site
+    import sysconfig
+
+    roots = [sysconfig.get_paths().get("purelib", "")]
+    roots += list(getattr(site, "getsitepackages", lambda: [])())
+    seen: set[str] = set()
+
+    for root in filter(None, roots):
+        if root in seen:
+            continue
+        seen.add(root)
+        for found in glob.glob(os.path.join(root, "*", "libpq*.dll")):
+            folder = os.path.dirname(found)
+            plain = os.path.join(folder, "libpq.dll")
+            if not os.path.exists(plain):
+                try:
+                    shutil.copy2(found, plain)
+                except OSError:
+                    continue          # read-only install; try the next one
+            try:
+                os.add_dll_directory(folder)
+            except (AttributeError, OSError):
+                pass
+            os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+            log.warning("psycopg's libpq was missing; using the one in %s", folder)
+            return
+
+
+try:
+    import psycopg
+except ImportError:
+    if sys.platform != "win32":
+        raise
+    _rescue_libpq_on_windows()
+    import psycopg                    # if this still fails, it should
+
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 

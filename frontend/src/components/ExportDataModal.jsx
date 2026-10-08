@@ -18,6 +18,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import useClosing from './useClosing';
 import {
   X, Download, FileSpreadsheet, FileText, HardDrive, Cloud, CheckCircle2,
   AlertCircle, Loader2, Info, Database, Sparkles, Lock, RefreshCw,
@@ -148,7 +149,8 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
     }
   };
 
-  if (!isOpen) return null;
+  const { render, leaving } = useClosing(isOpen);
+  if (!render) return null;
 
   const period = manifest?.period?.label || '…';
   const formats = manifest?.formats || [];
@@ -156,7 +158,7 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
 
   return (
     <div
-      className="drawer-scrim"
+      className={`drawer-scrim ${leaving ? 'is-leaving' : ''}`}
       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
       onMouseDown={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
     >
@@ -191,10 +193,10 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
                   <Loader2 size={20} style={{ animation: 'spin 0.9s linear infinite',
                                               color: 'var(--s1)' }} />
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>
+                    <div style={{ fontWeight: 600, fontSize: 'var(--fs-body)' }}>
                       Reading what is available to export…
                     </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 3 }}>
+                    <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 3 }}>
                       Counting the rows behind each source.
                     </div>
                   </div>
@@ -203,10 +205,10 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
                 <>
                   <AlertCircle size={20} style={{ color: 'var(--critical)' }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--critical)' }}>
+                    <div style={{ fontWeight: 600, fontSize: 'var(--fs-body)', color: 'var(--critical)' }}>
                       The export picker could not load
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--ink-2)', marginTop: 4,
+                    <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-2)', marginTop: 4,
                                   lineHeight: 1.55 }}>
                       {error || 'The server did not answer.'}
                     </div>
@@ -261,7 +263,7 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
                 })}
               </div>
               {activeDest?.note && (
-                <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 6 }}>
+                <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 6 }}>
                   {activeDest.note}
                 </div>
               )}
@@ -271,7 +273,7 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
                 running the other way. */}
             <div className="xp-well">
               <Download size={26} style={{ color: 'var(--s1)' }} />
-              <div style={{ fontWeight: 600, fontSize: 13 }}>Choose a file format</div>
+              <div style={{ fontWeight: 600, fontSize: 'var(--fs-body)' }}>Choose a file format</div>
               <div className="xp-fmts">
                 {formats.map(f => {
                   const Icon = FORMAT_ICON[f.key] || FileText;
@@ -354,7 +356,7 @@ export default function ExportDataModal({ isOpen, onClose, onExported }) {
                   </label>
                 ))}
                 {loadingManifest && !manifest && (
-                  <div style={{ fontSize: 12, color: 'var(--ink-muted)', padding: '6px 0' }}>
+                  <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', padding: '6px 0' }}>
                     Reading what is available…
                   </div>
                 )}

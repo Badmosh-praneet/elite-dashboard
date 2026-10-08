@@ -1,17 +1,40 @@
 /**
  * The month as shares rather than counts.
  *
- * Everything on this panel answers "of the whole, how much is X". That is the
- * one question a ring answers better than a bar, which is why these are the
- * only rings on the sheet - and why the cuts drawn here were picked for having
- * few enough categories to read at a glance. The order book sits in four
- * states, the dealership sells four model families. Colour has twelve, so its
- * tail is folded into Other by the endpoint rather than drawn as twelve
- * unreadable slivers.
+ * Everything on this panel answers "of the whole, how much is X", and a ring
+ * is the shape people read as a share before they read anything else. The
+ * three rings that stood here had that shape and very little else.
  *
- * Two splits are deliberately not rings. Fresh against punched cars, and one
- * team against the other, are single numbers with a complement - a ring for a
- * two-way split is a worse bar. They are drawn as one bar each.
+ * Colour was dealt out by position in a list sorted largest-first, and the
+ * first slot on the ramp is its palest. So the biggest slice in every ring was
+ * the least visible thing in it - Virtus, the top seller at 48%, Candy White at
+ * 31%, Allotted at 43%, all drawn a shade off the background - and because
+ * Recharts sets legend text in the slice colour, the same three had the three
+ * labels nobody could read. The paint ring coloured Carbon Steel Gray red,
+ * because it happened to land on the sixth slot. No ring showed a number, and
+ * all three printed "42 bookings" in the middle, under a heading that already
+ * said it. The paint ring was smaller than the other two, because its legend
+ * lived inside the chart and took the height.
+ *
+ * These keep the ring and fix what it was carrying:
+ *
+ *   Prominence follows size, or, for the order book, progress. The largest
+ *   model is the strongest shade; the order book darkens clockwise through the
+ *   stages a booking moves through, so the ring reads as a pipeline.
+ *
+ *   Paint is drawn in paint. It is the one place on the sheet where colour is
+ *   the data rather than a code for it, and Other is hatched so it cannot pass
+ *   for a grey paint or for Candy White.
+ *
+ *   The middle says something different in each ring - the leading share and
+ *   what leads - and follows the pointer, so a ring answers a question instead
+ *   of repeating the total.
+ *
+ *   The legend is a small table in ink with the count and the share on every
+ *   row. It sits outside the chart, so all three rings are the same size
+ *   however many categories they hold.
+ *
+ * Colour has twelve values, so its tail is folded into Other by the endpoint.
  *
  * The weekday chart is not a share at all. It is here because it answers the
  * question the shares provoke: enquiries arrive midweek and bookings close at
@@ -25,33 +48,15 @@ import {
 } from 'recharts';
 import { api, n0 } from '../api/client';
 
-const AXIS = { fill: 'var(--ink-muted)', fontSize: 12 };
+const AXIS = { fill: 'var(--ink-muted)', fontSize: 'var(--fs-small)' };
 
-/* Same ordinal ramp the stacks use, so a model is the same colour wherever it
-   appears on the sheet. "Other" stays the quietest thing in the ring. */
+/* The ordinal ramp, used now only by the two-way splits below. It is dealt by
+   position, so it does not keep a category the same colour across charts - an
+   earlier note here said it did. "Other" stays the quietest thing present. */
 const RAMP = ['var(--o1)', 'var(--o2)', 'var(--o3)', 'var(--o4)', 'var(--o5)',
               'var(--viz-2)'];
 const colourFor = (name, i) =>
   (name === 'Other' || name === 'Unspecified' ? 'var(--ink-muted)' : RAMP[i % RAMP.length]);
-
-function Tip({ active, payload, total }) {
-  if (!active || !payload || !payload.length) return null;
-  const p = payload[0];
-  const value = Number(p.value) || 0;
-  const share = total ? Math.round((1000 * value) / total) / 10 : null;
-  return (
-    <div style={{
-      background: 'var(--surface)', border: '1px solid var(--grid)',
-      padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 12,
-    }}>
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.name}</div>
-      <div style={{ color: 'var(--ink-2)' }}>
-        {n0(value)}{share != null && <> &middot; {share}%</>}
-      </div>
-    </div>
-  );
-}
 
 function BarTip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
@@ -59,7 +64,7 @@ function BarTip({ active, payload, label }) {
     <div style={{
       background: 'var(--surface)', border: '1px solid var(--grid)',
       padding: '10px 14px', borderRadius: 'var(--radius-sm)',
-      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 12,
+      boxShadow: 'var(--shadow-md)', color: 'var(--ink)', fontSize: 'var(--fs-small)',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
       {payload.map((s, i) => (
@@ -74,57 +79,155 @@ function BarTip({ active, payload, label }) {
   );
 }
 
-/** A ring with its total in the middle, because the share is only half the answer. */
-function Donut({ title, note, data, unit }) {
-  const total = (data || []).reduce((a, d) => a + d.value, 0);
+/* Approximate paint for a colour name. Matched on the word that names the
+   hue, so "Deep Black Pearl" and "Deep Black Pearlescent" land on the same
+   swatch, and checked in order so Carbon Steel Gray is the dark grey before
+   "gray" alone can claim it, and Lava Blue the deep blue before "blue". A name
+   that matches nothing falls back to plain ink rather than an invented hue. */
+const PAINT = [
+  [/white/i, '#f4f4f1'],
+  [/black/i, '#17181b'],
+  [/silver/i, '#b9bcc1'],
+  [/carbon|graphite|charcoal/i, '#4b4f55'],
+  [/gr[ae]y/i, '#83878d'],
+  [/lava|lapiz|night|navy/i, '#1f3a6b'],
+  [/blue/i, '#2f6cb2'],
+  [/red|cherry|ruby|maroon/i, '#9d1c25'],
+  [/yellow|curcuma|gold/i, '#dba427'],
+  [/green|avocado|olive/i, '#667546'],
+  [/orange|copper/i, '#c3622e'],
+  [/brown|bronze|beige/i, '#7a5a3e'],
+];
+const paintFor = name => (PAINT.find(([re]) => re.test(name)) || [])[1] || null;
+
+/* The endpoint sends model families in capitals. Everywhere else on the sheet
+   they read as words - "Virtus", "Taigun (FL)" - so these do too; short and
+   bracketed tokens are codes and keep their capitals. */
+function label(name) {
+  if (name !== name.toUpperCase()) return name;
+  return name.split(/\s+/).map(w =>
+    (w.length <= 3 || /[()\d]/.test(w)) ? w : w[0] + w.slice(1).toLowerCase(),
+  ).join(' ');
+}
+
+/* A booking moves through these in order, so the ring runs clockwise in it. */
+const PIPELINE = ['Booked', 'Awaiting stock', 'Allotted', 'Retailed'];
+const byPipeline = rows => [...rows].sort((a, b) => {
+  const ia = PIPELINE.indexOf(a.name), ib = PIPELINE.indexOf(b.name);
+  return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+});
+/* Largest first, with Other last however large it is: it is the remainder,
+   not a contender. */
+const bySize = rows => [...rows].sort((a, b) => {
+  const oa = a.name === 'Other', ob = b.name === 'Other';
+  if (oa !== ob) return oa ? 1 : -1;
+  return b.value - a.value;
+});
+
+/* Prominence, strongest first. The ramp's first step is a shade off the
+   ground in both themes - that is where the old rings put their biggest
+   slice - so it is last here, reached only by a fifth category. o5 is the
+   strongest in the day theme and the night one alike, because the ramp
+   inverts with the ground. */
+const PROMINENT = ['var(--o5)', 'var(--o4)', 'var(--o3)', 'var(--o2)', 'var(--o1)'];
+const HATCH = 'url(#ring-hatch)';
+
+/* Three ways to colour a slice, one per ring. */
+const bySizeColour = (_r, i) => PROMINENT[Math.min(i, PROMINENT.length - 1)];
+/* A pipeline darkens toward done, so the ring reads as progress: the stage
+   furthest along is the strongest, whatever its size. */
+const byStageColour = (_r, i, n) => PROMINENT[Math.min(Math.max(n - 1 - i, 0), PROMINENT.length - 1)];
+/* Paint is the one ring where colour is the data. Other is hatched so it can
+   be neither a grey paint nor Candy White. */
+const paintColour = r => (r.name === 'Other' ? HATCH : paintFor(r.name) || 'var(--ink-muted)');
+
+/** A ring that says what it shows. The middle carries the leading share - or,
+    under the pointer, the share of whatever the pointer is on - and the legend
+    carries every number, so nothing needs a hover to be read. */
+function Ring({ title, note, rows = [], colourOf, outlined = false }) {
+  const [active, setActive] = useState(null);
+  const total = rows.reduce((a, d) => a + d.value, 0);
+  const share = v => (total ? (100 * v) / total : 0);
+
+  // The leader is the largest real category; Other never leads.
+  const leader = rows.reduce(
+    (best, r, i) => (r.name !== 'Other' && (best < 0 || r.value > rows[best].value) ? i : best), -1);
+  const focus = active != null ? rows[active] : rows[leader];
+
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="panel-header" style={{ marginBottom: 10 }}>
+    <div className="panel">
+      <div className="panel-header" style={{ marginBottom: 6 }}>
         <h2>{title}</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{note}</span>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>{note}</span>
       </div>
-      <div style={{ height: 240, width: '100%', position: 'relative' }}>
-        {!data || !data.length ? (
-          <div style={{ display: 'flex', height: '100%', alignItems: 'center',
-                        justifyContent: 'center', color: 'var(--ink-muted)', fontSize: 13 }}>
-            Nothing recorded yet.
-          </div>
-        ) : (
-          <>
+      {!rows.length || !total ? (
+        <div className="ring-empty">Nothing recorded yet.</div>
+      ) : (
+        <>
+          <div className="ring-chart" onMouseLeave={() => setActive(null)}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={data} dataKey="value" nameKey="name"
-                     innerRadius="56%" outerRadius="80%" paddingAngle={1}
-                     stroke="var(--surface)" strokeWidth={2}>
-                  {data.map((d, i) => (
-                    <Cell key={d.name} fill={colourFor(d.name, i)} />
+                {outlined && (
+                  <defs>
+                    <pattern id="ring-hatch" width="5" height="5"
+                             patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="5" height="5" style={{ fill: 'var(--surface)' }} />
+                      <line x1="0" y1="0" x2="0" y2="5"
+                            style={{ stroke: 'var(--ink-muted)', strokeWidth: 1.6 }} />
+                    </pattern>
+                  </defs>
+                )}
+                {/* Clockwise from twelve o'clock, so the ring reads in the same
+                    order as the legend beneath it. */}
+                <Pie data={rows} dataKey="value" nameKey="name"
+                     innerRadius="62%" outerRadius="88%"
+                     startAngle={90} endAngle={-270}
+                     paddingAngle={1} minAngle={3}
+                     onMouseEnter={(_d, i) => setActive(i)}
+                     onMouseLeave={() => setActive(null)}>
+                  {rows.map((r, i) => (
+                    <Cell key={r.name}
+                          fill={colourOf(r, i, rows.length)}
+                          fillOpacity={active == null || active === i ? 1 : 0.28}
+                          // Paint has white and black in it, which vanish against
+                          // one theme or the other without an edge; the blue rings
+                          // read cleaner separated by a gap of the ground.
+                          stroke={outlined ? 'var(--axis)' : 'var(--surface)'}
+                          strokeWidth={outlined ? 1 : 2} />
                   ))}
                 </Pie>
-                <RechartsTooltip content={p => <Tip {...p} total={total} />} />
-                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)' }}
-                        iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
-            {/* Centred on the ring, not on the panel - the legend sits below and
-                would drag a flex-centred label off the hole. */}
-            <div style={{
-              position: 'absolute', top: '42%', left: 0, right: 0,
-              transform: 'translateY(-50%)', textAlign: 'center',
-              pointerEvents: 'none',
-            }}>
-              <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.03em',
-                            color: 'var(--ink)', lineHeight: 1 }}>
-                {n0(total)}
+            {focus && (
+              <div className="ring-centre" aria-hidden="true">
+                <div className="ring-share">{Math.round(share(focus.value))}%</div>
+                <div className="ring-name">{label(focus.name)}</div>
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--ink-muted)',
-                            textTransform: 'uppercase', letterSpacing: '0.08em',
-                            marginTop: 3 }}>
-                {unit}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+            )}
+          </div>
+
+          <ul className="ring-legend">
+            {rows.map((r, i) => {
+              const fill = colourOf(r, i, rows.length);
+              const hatch = fill === HATCH;
+              return (
+                <li key={r.name}
+                    className={active != null && active !== i ? 'is-dim' : undefined}
+                    onMouseEnter={() => setActive(i)}
+                    onMouseLeave={() => setActive(null)}>
+                  <span className={`ring-swatch${hatch ? ' is-hatch' : ''}`}
+                        data-outlined={outlined || undefined}
+                        style={hatch ? undefined : { background: fill }}
+                        aria-hidden="true" />
+                  <span className="ring-label">{label(r.name)}</span>
+                  <b>{n0(r.value)}</b>
+                  <span className="ring-pct">{Math.round(share(r.value))}%</span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -136,7 +239,7 @@ function Split({ label, data }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 11, textTransform: 'uppercase',
+        <span style={{ fontSize: 'var(--fs-small)', textTransform: 'uppercase',
                        letterSpacing: '0.08em', color: 'var(--ink-muted)' }}>
           {label}
         </span>
@@ -151,7 +254,7 @@ function Split({ label, data }) {
       <div style={{ display: 'flex', gap: 16, marginTop: 7, flexWrap: 'wrap' }}>
         {data.map((d, i) => (
           <span key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 6,
-                                      fontSize: 12, color: 'var(--ink-2)' }}>
+                                      fontSize: 'var(--fs-small)', color: 'var(--ink-2)' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%',
                            background: colourFor(d.name, i) }} />
             {d.name}
@@ -183,7 +286,7 @@ export default function Composition({ refreshKey }) {
     return (
       <section style={{ marginBottom: 26 }}>
         <div className="panel">
-          <div style={{ color: 'var(--critical)', fontSize: 13 }}>{error}</div>
+          <div style={{ color: 'var(--critical)', fontSize: 'var(--fs-body)' }}>{error}</div>
         </div>
       </section>
     );
@@ -198,9 +301,9 @@ export default function Composition({ refreshKey }) {
     <section style={{ marginBottom: 26 }}>
       <div className="panel-header" style={{ marginBottom: 14 }}>
         <h2>How the month splits</h2>
-        <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
           {!data ? 'Reading the month…'
-            : `${data.period} — every ring totals the ${n0(
+            : `${data.period} — every ring totals the month's ${n0(
                 (data.order_book || []).reduce((a, d) => a + d.value, 0))} bookings`}
         </span>
       </div>
@@ -209,22 +312,22 @@ export default function Composition({ refreshKey }) {
         display: 'grid', gap: 20, marginBottom: 20,
         gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
       }}>
-        <Donut title="Where the order book stands"
-               note="Every booking, by fulfilment state"
-               data={data?.order_book} unit="bookings" />
-        <Donut title="What is selling"
-               note="Bookings by model family"
-               data={data?.by_model} unit="bookings" />
-        <Donut title="Colours customers choose"
-               note="Bookings by colour, rarest folded into Other"
-               data={data?.by_colour} unit="bookings" />
+        <Ring title="Where the order book stands"
+              note="Every booking, clockwise through its stages"
+              rows={byPipeline(data?.order_book || [])} colourOf={byStageColour} />
+        <Ring title="What is selling"
+              note="Bookings by model family"
+              rows={bySize(data?.by_model || [])} colourOf={bySizeColour} />
+        <Ring title="Colours customers choose"
+              note="Bookings by paint, rarest folded into Other"
+              rows={bySize(data?.by_colour || [])} colourOf={paintColour} outlined />
       </div>
 
       <div className="grid-2">
         <div className="panel">
           <div className="panel-header" style={{ marginBottom: 16 }}>
             <h2>Two-way splits</h2>
-            <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+            <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               Where the car came from, and who sold it
             </span>
           </div>
@@ -235,7 +338,7 @@ export default function Composition({ refreshKey }) {
         <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="panel-header" style={{ marginBottom: 14 }}>
             <h2>Which days are busy</h2>
-            <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+            <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               {peakEnq && peakBook
                 ? `Enquiries peak ${peakEnq.day} (${n0(peakEnq.enquiries)}), `
                   + `bookings ${peakBook.day} (${n0(peakBook.bookings)})`
@@ -256,7 +359,7 @@ export default function Composition({ refreshKey }) {
                        tickLine={false} tick={AXIS} />
                 <RechartsTooltip content={BarTip}
                                  cursor={{ fill: 'var(--grid)', opacity: 0.35 }} />
-                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--ink-muted)', paddingTop: 8 }}
+                <Legend wrapperStyle={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', paddingTop: 8 }}
                         iconType="circle" />
                 <Bar yAxisId="e" dataKey="enquiries" name="Enquiries"
                      fill="var(--viz-1)" radius={[3, 3, 0, 0]} />

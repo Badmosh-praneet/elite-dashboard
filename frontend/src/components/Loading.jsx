@@ -63,9 +63,9 @@ export default function Loading({ done = 0, total = 16 }) {
         {/* The count is the honest part: sixteen calls, and this many back. */}
         <div style={{
           display: 'flex', alignItems: 'baseline', gap: 14,
-          marginBottom: 22, color: 'var(--ink-muted)', fontSize: 12,
+          marginBottom: 22, color: 'var(--ink-muted)', fontSize: 'var(--fs-small)',
         }}>
-          <span style={{ letterSpacing: '0.16em', textTransform: 'uppercase', fontSize: 10.5 }}>
+          <span style={{ letterSpacing: '0.16em', textTransform: 'uppercase', fontSize: 'var(--fs-micro)' }}>
             Drawing the sheet
           </span>
           <span style={{ fontVariantNumeric: 'tabular-nums' }}>{done} of {total}</span>
@@ -75,7 +75,7 @@ export default function Loading({ done = 0, total = 16 }) {
           }}>
             <span style={{
               position: 'absolute', inset: '0 auto 0 0', width: `${pct}%`,
-              background: 'var(--shu)', transition: 'width 0.45s ease',
+              background: 'var(--shu)', transition: 'width var(--t-slow) var(--ease-out)',
             }} />
           </span>
         </div>

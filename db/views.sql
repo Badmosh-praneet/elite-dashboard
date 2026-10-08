@@ -152,6 +152,10 @@ orders AS (
     WHERE b.is_current_period
     GROUP BY m.family
 ),
+-- A month's retails, here and everywhere else: the registrations its workbook
+-- listed (load_period_id), plus any entered by hand during it. Each workbook's
+-- registration tab is that month's retails - its scorecard's retail column
+-- counts exactly those rows - so counting every load put months together.
 retails AS (
     -- FIX (2026-10-08): was `FROM registration`, which counted every month's
     -- retails; see v_registration_current.
@@ -159,7 +163,12 @@ retails AS (
     FROM v_registration_current r
     JOIN vehicle v   ON v.vehicle_id = r.vehicle_id
     JOIN dim_model m ON m.model_id   = v.model_id
+    JOIN dim_period ap ON ap.is_active
     WHERE r.status = 'REGISTERED'
+      AND (r.load_period_id = ap.period_id
+           OR (r.load_period_id IS NULL
+               AND (r.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+                   BETWEEN ap.period_start AND ap.period_end))
     GROUP BY m.family
 )
 SELECT f.family                                AS model,
@@ -259,10 +268,26 @@ FROM v_order_book b
 WHERE b.fulfilment_status = 'NO_STOCK';
 
 -- Enquiry volume by channel for the current period.
+-- Grouped by channel, not by the individual source row.
+--
+-- The source column in the CRM export sometimes holds a salesperson's name
+-- instead of a channel, so the chart listed CRM, WALKIN, TELE and DIGITAL
+-- beside ADITYA KUMAR and DIVYA SHREE - categories and people in one ranking,
+-- which is not a thing you can read. Those rows are classified REFERRAL now
+-- (a lead credited to a named individual is a referral from them) and this
+-- groups on the channel, so the chart is six categories rather than twelve
+-- entries of two different kinds.
+--
+-- The individual names are not lost - they are still in dim_lead_source.name
+-- against every lead, for anyone who needs to know which consultant brought
+-- what. They are simply not a category.
+--
+-- is_paid_media is aggregated with bool_or: a channel counts as paid if any
+-- source within it is, which today is only DIGITAL.
 CREATE OR REPLACE VIEW v_leads_sourcewise AS
-SELECT s.name                                                        AS source,
+SELECT s.channel::text                                               AS source,
        s.channel,
-       s.is_paid_media,
+       bool_or(s.is_paid_media)                                      AS is_paid_media,
        count(*)                                                      AS leads,
        count(*) FILTER (WHERE l.qualified_stage = 'Qualified')        AS qualified,
        round(100.0 * count(*) FILTER (WHERE l.qualified_stage = 'Qualified')
@@ -270,7 +295,7 @@ SELECT s.name                                                        AS source,
 FROM lead l
 JOIN dim_lead_source s USING (source_id)
 WHERE l.is_current_period
-GROUP BY s.source_id, s.name, s.channel, s.is_paid_media;
+GROUP BY s.channel;
 
 -- Model demand vs supply: what people ask for against what is in stock.
 -- Family level, for the same reason as v_model_position.
@@ -302,7 +327,10 @@ LEFT JOIN (
 -- booking entered through the dashboard moves the leaderboard immediately. This
 -- is safe because the two agree exactly on load: every consultant's workbook
 -- booking_achieved and retail_achieved matches their row count in booking and
--- registration, to the unit.
+-- registration, to the unit - counting the month's rows only. Registrations
+-- carry no business month, so a month's are the ones its workbook listed (see
+-- v_model_position); counted over every load, Sanjeev had 7 retails in August
+-- against the workbook's 4, the other 3 being September's.
 --
 -- Enquiries and test drives are the exception and are baseline + live:
 --   * the August lead export carries no consultant, so 367 of 367 leads are
@@ -345,9 +373,14 @@ per_consultant AS (
     SELECT c.consultant_id,
            (SELECT count(*) FROM booking b
              WHERE b.consultant_id = c.consultant_id AND b.is_current_period)   AS bookings,
-           (SELECT count(*) FROM v_registration_current rg
+           (SELECT count(*) FROM registration rg
+              JOIN dim_period ap ON ap.is_active
              WHERE rg.consultant_id = c.consultant_id
-               AND rg.status = 'REGISTERED')                                     AS retails,
+               AND rg.status = 'REGISTERED'
+               AND (rg.load_period_id = ap.period_id
+                    OR (rg.load_period_id IS NULL
+                        AND (rg.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+                            BETWEEN ap.period_start AND ap.period_end)))         AS retails,
            (SELECT count(*) FROM lead l
              WHERE l.consultant_id = c.consultant_id
                AND l.is_current_period AND l.origin = 'MANUAL')                  AS leads_added,
@@ -379,7 +412,11 @@ per_rollup AS (
           AND upper(r.row_label) LIKE '%' || upper(COALESCE(
                 (SELECT name FROM dim_team dt WHERE dt.team_id = c.team_id), '~none~')) || '%')
     JOIN per_consultant pc ON pc.consultant_id = c.consultant_id
+    -- The dashboard's month's total rows only. Every month loaded has a TOTAL
+    -- row and the same team rows, so joining all of them counted each
+    -- consultant once per month: August's grand total read 84 bookings for 42.
     WHERE r.row_kind IN ('TEAM_TOTAL', 'GRAND_TOTAL')
+      AND r.period_id = (SELECT period_id FROM dim_period WHERE is_active)
     GROUP BY r.row_label
 ),
 live AS (
@@ -484,16 +521,27 @@ SELECT p.label AS period,
          WHERE is_current_period)                                       AS enquiries,
        (SELECT count(*) FROM lead
          WHERE is_current_period AND qualified_stage = 'Qualified')      AS qualified,
-       (SELECT COALESCE(sum(td_achieved), 0) FROM target_consultant_scorecard
-         WHERE row_kind = 'GRAND_TOTAL' AND period_id = p.period_id)
+       -- This month's grand total. Summed over every month's, August read 204 -
+       -- its own 128 plus September's 76. A workbook with no TOTAL row (one
+       -- team's scorecard) falls back to its team rows, which is what the TOTAL
+       -- row adds up; without that September read 0 against the team's 68.
+       COALESCE((SELECT sum(td_achieved) FROM target_consultant_scorecard
+                  WHERE row_kind = 'GRAND_TOTAL' AND period_id = p.period_id),
+                (SELECT sum(td_achieved) FROM target_consultant_scorecard
+                  WHERE row_kind = 'TEAM_TOTAL' AND period_id = p.period_id),
+                0)
        + (SELECT count(*) FROM test_drive
            WHERE origin = 'MANUAL'
              AND (td_date IS NULL
                   OR td_date BETWEEN p.period_start AND p.period_end))   AS test_drives,
        (SELECT count(*) FROM booking
          WHERE is_current_period)                                        AS bookings,
-       (SELECT count(*) FROM v_registration_current
-         WHERE status = 'REGISTERED')                                    AS retails
+       (SELECT count(*) FROM registration r
+         WHERE r.status = 'REGISTERED'
+           AND (r.load_period_id = p.period_id
+                OR (r.load_period_id IS NULL
+                    AND (r.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+                        BETWEEN p.period_start AND p.period_end)))       AS retails
 FROM dim_period p
 -- Exactly one row: the month the dashboard is reporting on.
 WHERE p.is_active;
@@ -517,13 +565,8 @@ SELECT f.period,
        (SELECT count(*) FROM booking
          WHERE is_current_period AND crm_entry_done IS FALSE)          AS bookings_missing_crm_entry,
        (SELECT sum(booking_amount) FROM booking WHERE is_current_period) AS booking_amount_collected,
-       -- FIX (2026-10-08): averaged every month's allotments; now the active
-       -- month's - its upload's rows, or hand-entered ones dated inside it.
-       (SELECT round(avg(a.tat_days), 1)
-          FROM allotment a JOIN dim_period ap ON ap.is_active
-         WHERE a.load_period_id = ap.period_id
-            OR (a.load_period_id IS NULL
-                AND a.allotted_date BETWEEN ap.period_start AND ap.period_end)) AS avg_allotment_tat_days
+       (SELECT round(avg(tat_days), 1) FROM allotment
+         WHERE load_period_id = (SELECT period_id FROM dim_period WHERE is_active)) AS avg_allotment_tat_days
 FROM v_sales_funnel f;
 
 -- Attachment mix on retailed cars: finance, insurance, extended warranty, SVP.
@@ -544,8 +587,13 @@ SELECT count(*)                                                        AS regist
              / NULLIF(count(*), 0), 1)                                  AS finance_pct,
        round(100.0 * count(*) FILTER (WHERE has_insurance)
              / NULLIF(count(*), 0), 1)                                  AS insurance_pct
-FROM v_registration_current
-WHERE status = 'REGISTERED';
+FROM registration r
+JOIN dim_period ap ON ap.is_active
+WHERE r.status = 'REGISTERED'
+  AND (r.load_period_id = ap.period_id
+       OR (r.load_period_id IS NULL
+           AND (r.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+               BETWEEN ap.period_start AND ap.period_end));
 
 -- How long a completed deal takes to clear the back office.
 CREATE OR REPLACE VIEW v_folder_tat AS
@@ -644,9 +692,13 @@ SELECT k.period,
        k.enquiry_to_booking_pct, k.booking_to_retail_pct,
        k.free_stock, k.allotted_stock, k.stock_over_90_days, k.backorders,
        k.bookings_missing_crm_entry, k.booking_amount_collected,
-       (SELECT booking_target   FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL') AS booking_target,
-       (SELECT retail_target    FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL') AS retail_target,
-       (SELECT leads_target     FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL') AS enquiry_target
+       -- The TOTAL row's targets, or for a workbook without one, its teams' added up.
+       COALESCE((SELECT booking_target FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'),
+                (SELECT sum(booking_target) FROM v_consultant_scorecard WHERE row_kind = 'TEAM_TOTAL')) AS booking_target,
+       COALESCE((SELECT retail_target FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'),
+                (SELECT sum(retail_target) FROM v_consultant_scorecard WHERE row_kind = 'TEAM_TOTAL')) AS retail_target,
+       COALESCE((SELECT leads_target FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'),
+                (SELECT sum(leads_target) FROM v_consultant_scorecard WHERE row_kind = 'TEAM_TOTAL')) AS enquiry_target
 FROM v_daily_kpi k;
 
 -- ---------------------------------------------------------------------
@@ -655,6 +707,15 @@ FROM v_daily_kpi k;
 -- The workbook is maintained by hand and its tabs are refreshed at different
 -- times, so they disagree with each other. Rather than quietly picking a winner,
 -- every disagreement found during the load is surfaced here.
+--
+-- The text is read by a manager, not a developer, so it says "the dashboard"
+-- rather than "views" and "the lower block" rather than BLOCK_2, and it names
+-- the active month instead of writing one in. `unit` says what affected_rows
+-- counts, so the panel can say "31 test drives" instead of "31 rows".
+--
+-- public.v_data_quality is a wrapper over this view for the Supabase API, and
+-- selects its columns by name - so a column appended here does not reach it
+-- until it is added there too, and cannot break it.
 -- ---------------------------------------------------------------------
 
 -- FIX (2026-10-08): four of these checks counted rows from every month loaded,
@@ -663,72 +724,103 @@ FROM v_daily_kpi k;
 -- v_registration_current, and the Daily Tracker and allotment checks are held
 -- to the active month.
 CREATE OR REPLACE VIEW v_data_quality AS
-WITH checks AS (
-    SELECT 'Test drive tab is stale'::text AS issue,
-           'The TD tab holds a November 2024 export, not August 2026 activity. '
-           || 'Funnel views take test drives from the scorecard instead.'::text AS detail,
+WITH active AS (
+    -- The month the dashboard is reporting on. Every sentence below that names
+    -- a month takes it from here; they used to say "August" outright, and would
+    -- have gone on saying it in every month after.
+    SELECT label,
+           period_start,
+           to_char(period_start, 'FMMonth')      AS month,
+           to_char(period_start, 'FMMonth YYYY') AS month_year
+      FROM dim_period
+     WHERE is_active
+     LIMIT 1
+),
+checks AS (
+    SELECT 'Test drive tab is out of date'::text AS issue,
+           ('The Test Drive tab''s latest entry is from '
+            || coalesce((SELECT to_char(max(td_date), 'FMMonth YYYY') FROM test_drive),
+                        'an earlier month')
+            || ', not ' || coalesce((SELECT month_year FROM active), 'the current month')
+            || '. The funnel uses the scorecard''s test-drive figures instead.')::text AS detail,
            (SELECT count(*)::text FROM test_drive
-             WHERE td_date < (SELECT period_start FROM dim_period
-                               WHERE is_active LIMIT 1)) AS affected_rows,
-           'high'::text AS severity
+             WHERE td_date < (SELECT period_start FROM active)) AS affected_rows,
+           'high'::text AS severity,
+           -- What the count is a count of, so the panel can say "31 test drives"
+           -- rather than "31 rows". Singular; the panel pluralises.
+           'test drive'::text AS unit
     UNION ALL
-    SELECT 'Comparision tab disagrees with the base tabs',
-           'Comparision reports 350 enquiries / 37 bookings / 20 retails; the '
-           || 'underlying tabs hold '
-           || (SELECT count(*) FROM lead WHERE is_current_period)::text || ' / '
-           || (SELECT count(*) FROM booking WHERE is_current_period)::text || ' / '
-           || (SELECT count(*) FROM v_registration_current WHERE status = 'REGISTERED')::text || '.',
-           '3', 'medium'
+    -- The Comparision tab is not loaded (see schema.sql): 350 and 37 are what
+    -- that tab showed in the August 2026 workbook when it was read. So the check
+    -- is scoped to that month - in any other it would set live figures against a
+    -- snapshot from a different workbook. Retails are left out because the
+    -- registration table carries no period, so no count of it could agree with
+    -- the retail figure the rest of the dashboard shows. The count is the number
+    -- of figures that still disagree, so the check clears itself if they match.
+    SELECT 'Comparison tab disagrees with the base tabs',
+           'In the August 2026 workbook, the Comparison tab reports 350 enquiries and '
+           || '37 bookings; the base tabs hold '
+           || (SELECT count(*) FROM lead WHERE is_current_period)::text || ' and '
+           || (SELECT count(*) FROM booking WHERE is_current_period)::text || '.',
+           ((350 <> (SELECT count(*) FROM lead WHERE is_current_period))::int
+            + (37 <> (SELECT count(*) FROM booking WHERE is_current_period))::int)::text,
+           'medium',
+           'figure'
+     WHERE (SELECT label FROM active) = 'AUG2026'
     UNION ALL
     SELECT 'Daily Tracker holds two conflicting target blocks',
-           'The upper block sets a different enquiry target for the same consultant '
-           || 'than the lower block. Views read BLOCK_2 (full roster).',
+           'The upper and lower target blocks set different enquiry targets for the '
+           || 'same consultant. The dashboard uses the lower block, which covers the '
+           || 'full team.',
            (SELECT count(DISTINCT consultant_label)::text FROM target_daily_tracker
              WHERE period_id = (SELECT period_id FROM dim_period WHERE is_active)
                AND consultant_label IN (
                  SELECT consultant_label FROM target_daily_tracker
                   WHERE period_id = (SELECT period_id FROM dim_period WHERE is_active)
                  GROUP BY consultant_label HAVING count(DISTINCT block_label) > 1)),
-           'medium'
+           'medium',
+           'consultant'
     UNION ALL
-    SELECT 'August lead export is missing consultant and status columns',
-           'The Leads tab exported only date, name, source and model of interest, so '
-           || 'per-consultant enquiry counts must come from the scorecard.',
+    SELECT coalesce((SELECT month FROM active), 'This month')
+           || ' lead export is missing consultant and status columns',
+           'The Leads tab was exported with only the date, name, source and model of '
+           || 'interest, so enquiries per consultant are taken from the scorecard.',
            (SELECT count(*)::text FROM lead
              WHERE is_current_period AND consultant_id IS NULL),
-           'medium'
+           'medium',
+           'lead'
     UNION ALL
     SELECT 'Bookings not entered in the CRM',
-           'Bookings on the August tab with ZOHO ENTRY = NO. These will not appear in '
-           || 'VW-side reporting until they are punched.',
+           'Bookings on the ' || coalesce((SELECT month FROM active), 'current')
+           || ' tab marked ZOHO ENTRY = NO. They will not appear in VW reporting until '
+           || 'they are entered.',
            (SELECT count(*)::text FROM booking
              WHERE is_current_period AND crm_entry_done IS FALSE),
-           'high'
+           'high',
+           'booking'
     UNION ALL
     SELECT 'Allotments with no chassis on the source tab',
-           'The Alloted tab has no chassis column; rows were matched to stock on '
-           || 'model text and ageing. Unmatched rows have no vehicle link.',
-           (SELECT count(*)::text FROM allotment a JOIN dim_period ap ON ap.is_active
-             WHERE a.vehicle_id IS NULL
-               AND (a.load_period_id = ap.period_id
-                    OR (a.load_period_id IS NULL
-                        AND a.allotted_date BETWEEN ap.period_start AND ap.period_end))),
-           'low'
+           'The Alloted tab has no chassis column, so allotments were matched to stock '
+           || 'by model and age. Unmatched allotments are not linked to a vehicle.',
+           (SELECT count(*)::text FROM allotment WHERE vehicle_id IS NULL),
+           'low',
+           'allotment'
     UNION ALL
     SELECT 'Registration report stops at accounts',
-           'On the Reg Report tab the columns from FOLDER SENT TO HO rightwards - '
-           || 'invoice date, registration date, registration number, VOIW id and '
-           || 'delivery date - are blank on every row, so the fulfilment stage has '
-           || 'to be read from the status column instead.',
-           (SELECT count(*)::text FROM v_registration_current
+           'On the Reg Report tab, every column from FOLDER SENT TO HO onwards - invoice '
+           || 'date, registration date and number, VOIW ID and delivery date - is blank, '
+           || 'so the fulfilment stage is read from the status column instead.',
+           (SELECT count(*)::text FROM registration
              WHERE registration_date IS NULL AND invoice_date IS NULL),
-           'medium'
+           'medium',
+           'registration'
     UNION ALL
     SELECT 'Stock past its NADCON retail deadline',
-           'Units whose VW retail deadline has already passed while still unsold.',
+           'Unsold units whose VW retail deadline has already passed.',
            (SELECT count(*)::text FROM vehicle
              WHERE stock_status = 'FREESTOCK'
                AND nadcon_retail_date < CURRENT_DATE),
-           'high'
+           'high',
+           'unit'
 )
 SELECT * FROM checks WHERE affected_rows IS NOT NULL AND affected_rows <> '0';

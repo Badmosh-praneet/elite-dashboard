@@ -31,7 +31,7 @@ powershell -File tools/pg.ps1 start
 ```
 
 ```bash
-python tools/sql.py -f db/schema.sql && python tools/sql.py -f db/triggers.sql && python tools/sql.py -f db/pii.sql && python -m etl.load_dsr && python tools/sql.py -f db/views.sql
+python tools/sql.py -f db/schema.sql && python tools/sql.py -f db/triggers.sql && python tools/sql.py -f db/test_drives.sql && python tools/sql.py -f db/pii.sql && python -m etl.load_dsr && python tools/sql.py -f db/views.sql
 ```
 
 > **Customer PII is never stored (policy, 2026-10-08).** Phone numbers, email

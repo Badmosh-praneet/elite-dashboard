@@ -21,7 +21,7 @@ export default function SalesFunnel({ funnel = {} }) {
       <div className="panel-head">
         <div>
           <h2>Sales Conversion Funnel</h2>
-          <div style={{ fontSize: '12px', color: 'var(--ink-muted)', marginTop: '2px' }}>
+          <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: '2px' }}>
             Customer progression from initial enquiry to final retail delivery
           </div>
         </div>
@@ -45,14 +45,14 @@ export default function SalesFunnel({ funnel = {} }) {
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                fontSize: '13px',
+                fontSize: 'var(--fs-body)',
                 marginBottom: '5px',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span style={{ fontWeight: '600' }}>{s.stage}</span>
                   {convRate != null && (
                     <span style={{
-                      fontSize: '11px',
+                      fontSize: 'var(--fs-small)',
                       color: 'var(--ink-muted)',
                       background: 'var(--surface-sub)',
                       padding: '2px 6px',
@@ -65,7 +65,7 @@ export default function SalesFunnel({ funnel = {} }) {
                 <div style={{ fontWeight: '700' }}>
                   <span>{n0(val)}</span>
                   {tgt != null && (
-                    <span style={{ color: 'var(--ink-muted)', fontWeight: '400', fontSize: '12px', marginLeft: '4px' }}>
+                    <span style={{ color: 'var(--ink-muted)', fontWeight: '400', fontSize: 'var(--fs-small)', marginLeft: '4px' }}>
                       / {n0(tgt)}
                     </span>
                   )}
@@ -87,7 +87,7 @@ export default function SalesFunnel({ funnel = {} }) {
                   width: `${Math.max(1.5, pctOfMax)}%`,
                   background: 'var(--viz-1)',
                   borderRadius: '2px',
-                  transition: 'width 0.4s ease',
+                  transition: 'width var(--t-slow) var(--ease-out)',
                 }} />
                 {tgtPct != null && (
                   /* A full-height rule in seal ink with a cap above it: the old

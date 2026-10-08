@@ -30,6 +30,8 @@ from .entry import router as entry_router
 from .crm_api import router as crm_router
 from .export import router as export_router
 from .webhooks import router as webhooks_router
+from .calls import router as calls_router
+from .test_drives import router as test_drives_router  # prototype
 from .mcp_server import router as mcp_router
 from .events import broker
 
@@ -96,6 +98,8 @@ app.include_router(crm_router)
 # And the way back out: the live tables as an Excel workbook or a CSV set.
 app.include_router(export_router)
 app.include_router(webhooks_router)
+app.include_router(calls_router)
+app.include_router(test_drives_router)
 # The Perfox "Dashboard Insights" agent's tool surface.
 app.include_router(mcp_router)
 
@@ -112,12 +116,28 @@ app.include_router(mcp_router)
 # connection, spent ~5.2 s wall-clock to move 50 KB. Postgres will build all of
 # it as JSON in a single statement, so the page now costs one round trip
 # instead of sixteen checkouts.
+# The dealership's targets for the month the dashboard is set to: its
+# scorecard's TOTAL row - or, for a workbook with no TOTAL row (one team's
+# scorecard, say), its team rows added up, which is what the TOTAL row is.
+# With neither there are none; the front end used to fill in August's (84
+# bookings, 66 retails, 450 enquiries, 300 test drives) and show them as any
+# month's.
+_TARGETS_SQL = """
+    SELECT leads_target, td_target, booking_target, retail_target
+      FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'
+    UNION ALL
+    SELECT sum(leads_target), sum(td_target), sum(booking_target), sum(retail_target)
+      FROM v_consultant_scorecard
+     WHERE row_kind = 'TEAM_TOTAL'
+       AND NOT EXISTS (SELECT 1 FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL')
+    HAVING count(*) > 0
+    LIMIT 1"""
+
 _DASHBOARD_BUNDLE = """
 SELECT
   (SELECT row_to_json(x) FROM v_daily_kpi x)                                        AS kpi,
   (SELECT row_to_json(x) FROM v_sales_funnel x)                                     AS funnel_raw,
-  (SELECT row_to_json(x) FROM (SELECT * FROM v_consultant_scorecard
-      WHERE row_kind = 'GRAND_TOTAL' LIMIT 1) x)                                    AS targets,
+  (SELECT row_to_json(x) FROM (__TARGETS__) x)                                     AS targets,
   (SELECT json_agg(x) FROM v_consultant_leaderboard x)                              AS board,
   (SELECT json_agg(x) FROM (SELECT * FROM v_leads_sourcewise ORDER BY leads DESC) x)        AS sources,
   (SELECT json_agg(x) FROM (SELECT * FROM v_model_position ORDER BY total_stock DESC, model) x) AS models,
@@ -206,7 +226,7 @@ SELECT
                           SELECT chassis_number, model, variant, colour, stock_aging_days
                           FROM v_stock WHERE stock_status = 'FREESTOCK'
                           ORDER BY stock_aging_days DESC NULLS LAST) x)))            AS options
-"""
+""".replace("__TARGETS__", _TARGETS_SQL)
 
 
 @app.get("/api/dashboard", tags=["dashboard"])
@@ -557,9 +577,14 @@ def sales_trends(
                 FROM spine s ORDER BY s.bucket
             """, (lo, hi)).fetchall()
 
+            # Channel, not the individual source row. The CRM export puts a
+            # salesperson's name in the source column on some leads, so
+            # grouping by name stacked ADITYA KUMAR beside CRM and WALKIN -
+            # people and categories in one stack. Same grouping as
+            # v_leads_sourcewise, so this chart and Lead Sources agree.
             by_source = cx.execute(f"""
                 SELECT date_trunc('{grain}', l.created_at)::date AS bucket,
-                       COALESCE(src.name, 'Unattributed') AS name,
+                       COALESCE(src.channel::text, 'Unattributed') AS name,
                        count(*) AS n
                   FROM lead l LEFT JOIN dim_lead_source src USING (source_id)
                  WHERE l.is_current_period AND l.created_at IS NOT NULL
@@ -643,6 +668,68 @@ def sales_trends(
         "sources": src_keep + (["Other"] if src_rest else []),
         "models": mdl_keep + (["Other"] if mdl_rest else []),
         "buckets": buckets,
+    }
+
+
+@app.get("/api/folder-tat", tags=["dashboard"])
+def folder_tat():
+    """
+    How long paperwork sits before it reaches accounts.
+
+    v_folder_tat has been in the schema all along and shown nowhere. It is the
+    one back-office measure the workbook carries: when a folder was lined up,
+    when it reached accounts, and how many days passed in between. A car can be
+    sold and delivered while its file sits on someone's desk, and nothing else
+    on the sheet would say so.
+
+    Rows with no lined-up date are dropped rather than counted as zero-day
+    turnarounds, which would flatter the average.
+    """
+    if not is_db_ready():
+        return {"rows": [], "total": 0, "with_dates": 0, "avg_days": None,
+                "over_3_days": 0}
+    try:
+        rows = fetch_all("""
+            SELECT registration_id, customer_name, consultant, registration_no,
+                   folder_lined_up_on, folder_given_to_accounts_on,
+                   days_to_accounts, booking_to_registration_days
+              FROM v_folder_tat
+             ORDER BY folder_lined_up_on DESC NULLS LAST, registration_id DESC
+        """)
+    except Exception:
+        log.exception("folder tat failed")
+        return {"rows": [], "total": 0, "with_dates": 0, "avg_days": None,
+                "over_3_days": 0}
+
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["registration_id"],
+            "customer": r["customer_name"],
+            "consultant": r["consultant"],
+            "registration_no": r["registration_no"],
+            "lined_up": r["folder_lined_up_on"].isoformat() if r["folder_lined_up_on"] else None,
+            "to_accounts": r["folder_given_to_accounts_on"].isoformat() if r["folder_given_to_accounts_on"] else None,
+            "days": r["days_to_accounts"],
+        })
+
+    timed = [x["days"] for x in out if x["days"] is not None]
+    # A folder cannot reach accounts before it was lined up, and one row says it
+    # did by ten days - the workbook has those two dates the wrong way round.
+    # Averaging it in turned a real 0.2 days into -0.1, which reads as paperwork
+    # arriving before it exists. Counted and reported instead of silently kept
+    # or silently dropped.
+    sane = [d for d in timed if d >= 0]
+    return {
+        "rows": out,
+        "total": len(out),
+        "with_dates": len(timed),
+        # Rounded to one place: this is a count of days, and two decimals on it
+        # implies a precision the source dates do not have.
+        "avg_days": round(sum(sane) / len(sane), 1) if sane else None,
+        "same_day": sum(1 for d in sane if d == 0),
+        "over_3_days": sum(1 for d in sane if d > 3),
+        "impossible": len(timed) - len(sane),
     }
 
 
@@ -760,10 +847,7 @@ def funnel():
     if is_db_ready():
         try:
             stages = fetch_one("SELECT * FROM v_sales_funnel")
-            targets = fetch_one("""
-                SELECT leads_target, td_target, booking_target, retail_target
-                FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'
-            """) or {}
+            targets = fetch_one(_TARGETS_SQL) or {}
             if stages:
                 return {
                     "period": stages["period"],
@@ -1223,4 +1307,63 @@ def health():
         "status": "ok",
         "database": db_status,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
+        "config": _config_report(),
     }
+
+
+def _config_report() -> dict:
+    """Which configuration the running process can actually see.
+
+    A variable set in a hosting dashboard and a variable present in the
+    process are different facts, and when they disagree there is no way to
+    tell from the outside which one is wrong - the panel says the key is
+    missing, the dashboard says it is right there, and both are telling the
+    truth about different things. This reports what the process has.
+
+    Names and booleans only, never a value. It discloses nothing that the
+    503 from /api/calls does not already state, and the service name is not
+    a secret - it is the thing you need in order to know whether the page
+    you edited belongs to the process that is answering you.
+
+    `perfox_named` catches the failure this was written for: a variable whose
+    name carries a trailing space or a typo is set, and is invisible, because
+    the dashboard renders it identically to the correct one.
+    """
+    return {
+        # Render injects these; absent means this is not a Render instance.
+        "service": os.environ.get("RENDER_SERVICE_NAME") or None,
+        "commit": (os.environ.get("RENDER_GIT_COMMIT") or "")[:7] or None,
+        "database_url": bool(os.environ.get("DATABASE_URL", "").strip()),
+        "perfox_api_key": bool(os.environ.get("PERFOX_API_KEY", "").strip()),
+        "perfox_named": sorted(k for k in os.environ if "PERFOX" in k.upper()),
+    }
+
+
+# ---------------------------------------------------------------------
+# Every other path belongs to the front end.
+#
+# The dashboard has real routes now - /sales, /accounts, /people - rather than
+# hashes, which means the browser asks this server for them: on a direct visit,
+# on a refresh, and on every link somebody pastes to a colleague. Without this
+# they answered 404 and only the bare "/" worked, which is the classic way a
+# single-page app looks broken to everyone except the person who clicked their
+# way there.
+#
+# Registered last, so it catches only what nothing else claimed. The API is
+# excluded explicitly: a typo under /api should come back as a JSON 404, not as
+# a page of HTML that a fetch will fail to parse and report as something else
+# entirely.
+# ---------------------------------------------------------------------
+_NOT_THE_APP = ("api/", "mcp", "static/", "docs", "redoc", "openapi.json", "health")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str):
+    if full_path.startswith(_NOT_THE_APP):
+        raise HTTPException(status_code=404, detail="Not found")
+    index_file = STATIC / "index.html"
+    if index_file.exists():
+        # no-cache for the same reason "/" uses it: the HTML names a hashed
+        # bundle, and a stale copy points at a file that no longer exists.
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
+    return {"message": "Volkswagen Elite Motors CRM API is running."}

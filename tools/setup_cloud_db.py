@@ -51,10 +51,15 @@ def main():
                 triggers_sql = (ROOT / "db" / "triggers.sql").read_text(encoding="utf-8")
                 cur.execute(triggers_sql)
 
+                print("   Applying db/test_drives.sql (test drives, filed from enquiries)...")
+                cur.execute((ROOT / "db" / "test_drives.sql").read_text(encoding="utf-8"))
+
                 # PII POLICY (2026-10-08): the redaction triggers go on before
                 # the first load, so a new database never holds a customer's
-                # phone, email or address even for a moment.
-                print("    Applying db/pii.sql (customer PII redaction triggers)...")
+                # phone, email or address even for a moment. AFTER test_drives.sql
+                # on purpose: pii.sql guards that file's test_drive_booking table
+                # and skips any table that does not exist yet.
+                print("   Applying db/pii.sql (customer PII redaction triggers)...")
                 cur.execute((ROOT / "db" / "pii.sql").read_text(encoding="utf-8"))
 
         os.environ["DATABASE_URL"] = dsn

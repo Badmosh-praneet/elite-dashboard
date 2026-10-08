@@ -8,9 +8,9 @@
  * so a new tab cannot arrive missing one of them.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, Download } from 'lucide-react';
-import { n0, money, dt, pct, sendJson } from '../api/client';
+import { n0, money, dt, pct } from '../api/client';
 
 /* Database enums are written for the database. ALLOTED is also misspelled at
    source, which is not something a consultant should have to read. */
@@ -27,54 +27,13 @@ function StatusPill({ value }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
-      fontSize: 11.5, color: 'var(--ink-2)', whiteSpace: 'nowrap',
+      fontSize: 'var(--fs-small)', color: 'var(--ink-2)', whiteSpace: 'nowrap',
     }}>
       <span style={{
         width: 6, height: 6, flex: 'none', borderRadius: '50%', background: s.tint,
       }} />
       {s.label}
     </span>
-  );
-}
-
-/* FIX (2026-10-08): the README promises that "the order-book panel also edits
-   in place - change a booking's status or tick its CRM box and it is written
-   immediately", and PATCH /api/bookings/{id} exists for exactly that, but the
-   React rewrite drew both columns read-only, so nothing on the dashboard could
-   change a booking after it was entered. These two controls restore it. A
-   change is saved at once and shown at once; if the save fails the row goes
-   back to what the server holds. (A booking that came from the workbook can be
-   edited too, as before - the next upload of its month rewrites it.) */
-function StatusEditor({ row, ctx }) {
-  return (
-    <select
-      value={row.fulfilment_status || ''}
-      disabled={ctx.busy === row.booking_id}
-      onChange={e => ctx.save(row, { fulfilment_status: e.target.value })}
-      aria-label={`Status for ${row.customer_name || 'booking'}`}
-      style={{ fontSize: 11.5, padding: '2px 4px' }}
-    >
-      {!row.fulfilment_status && <option value="">–</option>}
-      {Object.entries(STATUS).map(([key, s]) => (
-        <option key={key} value={key}>{s.label}</option>
-      ))}
-    </select>
-  );
-}
-
-function CrmToggle({ row, ctx }) {
-  return (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5,
-                    color: row.crm_entry_done ? 'var(--ink-muted)' : 'var(--critical)' }}>
-      <input
-        type="checkbox"
-        checked={row.crm_entry_done === true}
-        disabled={ctx.busy === row.booking_id}
-        onChange={e => ctx.save(row, { crm_entry_done: e.target.checked })}
-        aria-label={`Punched in CRM for ${row.customer_name || 'booking'}`}
-      />
-      {row.crm_entry_done ? 'Yes' : 'Pending'}
-    </label>
   );
 }
 
@@ -99,18 +58,14 @@ const TABS = {
       {
         key: 'fulfilment_status', label: 'Status',
         value: r => (STATUS[r.fulfilment_status] || {}).label || txt(r.fulfilment_status),
-        render: (r, ctx) => (r.booking_id != null && ctx
-          ? <StatusEditor row={r} ctx={ctx} />
-          : <StatusPill value={r.fulfilment_status} />),
+        render: r => <StatusPill value={r.fulfilment_status} />,
       },
       {
         key: 'crm_entry_done', label: 'In CRM',
         value: r => (r.crm_entry_done === false ? 'Pending' : r.crm_entry_done ? 'Yes' : ''),
-        render: (r, ctx) => (r.booking_id != null && ctx
-          ? <CrmToggle row={r} ctx={ctx} />
-          : r.crm_entry_done === false
-            ? <span style={{ color: 'var(--critical)', fontSize: 11.5 }}>Pending</span>
-            : <span style={{ color: 'var(--ink-muted)', fontSize: 11.5 }}>Yes</span>),
+        render: r => (r.crm_entry_done === false
+          ? <span style={{ color: 'var(--critical)', fontSize: 'var(--fs-small)' }}>Pending</span>
+          : <span style={{ color: 'var(--ink-muted)', fontSize: 'var(--fs-small)' }}>Yes</span>),
       },
       {
         key: 'booking_date', label: 'Date', muted: true,
@@ -156,7 +111,7 @@ const TABS = {
         value: r => (r.is_current_period ? 'This month' : 'Carried over'),
         render: r => (
           <span style={{
-            fontSize: 11.5,
+            fontSize: 'var(--fs-small)',
             color: r.is_current_period ? 'var(--ink-2)' : 'var(--ink-muted)',
           }}>
             {r.is_current_period ? 'This month' : 'Carried over'}
@@ -193,39 +148,12 @@ function toCsv(columns, rows) {
   ].join('\r\n');
 }
 
-export default function DataTables({ orderbook = [], sources = [], backorders = [], onChanged }) {
+export default function DataTables({ orderbook = [], sources = [], backorders = [] }) {
   const [tab, setTab] = useState('bookings');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
-  // In-place edits (see StatusEditor above): shown at once from `edits`, saved
-  // in the background, and dropped again if the server refuses them.
-  const [edits, setEdits] = useState({});
-  const [busy, setBusy] = useState(null);
 
-  const save = async (row, patch) => {
-    const id = row.booking_id;
-    setEdits(prev => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
-    setBusy(id);
-    try {
-      await sendJson('PATCH', `/api/bookings/${id}`, patch);
-      if (onChanged) onChanged(`Updated ${row.customer_name || `booking ${id}`}`);
-    } catch (err) {
-      setEdits(prev => { const next = { ...prev }; delete next[id]; return next; });
-      if (onChanged) onChanged(`Could not update ${row.customer_name || 'the booking'}: ${err.message}`, { bad: true });
-    } finally {
-      setBusy(null);
-    }
-  };
-  const ctx = { save, busy };
-  // Fresh rows from the server supersede anything shown optimistically.
-  // Returning the same object when there is nothing to clear lets React skip
-  // the re-render, so this cannot loop even if `orderbook` is a new [] each time.
-  useEffect(() => { setEdits(prev => (Object.keys(prev).length ? {} : prev)); }, [orderbook]);
-
-  const editedOrderbook = useMemo(
-    () => orderbook.map(r => (edits[r.booking_id] ? { ...r, ...edits[r.booking_id] } : r)),
-    [orderbook, edits]);
-  const rowsFor = { bookings: editedOrderbook, sources, backorders };
+  const rowsFor = { bookings: orderbook, sources, backorders };
   const spec = TABS[tab];
   const rows = rowsFor[tab] || [];
 
@@ -269,7 +197,7 @@ export default function DataTables({ orderbook = [], sources = [], backorders = 
       <div className="panel-head" style={{ flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
         <div>
           <h2>Records</h2>
-          <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3 }}>
+          <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 3 }}>
             {query
               ? `${n0(visible.length)} of ${n0(rows.length)} rows match “${query}”`
               : `${n0(rows.length)} rows`}
@@ -354,7 +282,7 @@ export default function DataTables({ orderbook = [], sources = [], backorders = 
                       color: c.muted ? 'var(--ink-muted)' : undefined,
                     }}
                   >
-                    {c.render ? c.render(r, ctx) : (cellValue(c, r) || '–')}
+                    {c.render ? c.render(r) : (cellValue(c, r) || '–')}
                   </td>
                 )) }
               </tr>

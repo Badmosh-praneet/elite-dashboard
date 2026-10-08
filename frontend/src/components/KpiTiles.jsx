@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { n0, money, pct } from '../api/client';
+import Figure from './Figure';
 
 /* A sparkline, not a chart: no axes, no labels, just the shape of the month.
    Drawn as a path so it scales with the tile and recolours with the theme. */
@@ -48,7 +49,12 @@ function Meter({ share, color = 'var(--viz-1)' }) {
       height: 5, background: 'var(--sunken)', borderRadius: 3,
       overflow: 'hidden', border: '0.5px solid var(--grid)',
     }}>
-      <div style={{ width: `${capped}%`, height: '100%', background: color, borderRadius: 3 }} />
+      <div style={{
+        width: `${capped}%`, height: '100%', background: color, borderRadius: 3,
+        // The hero meter has always slid to its new share; these eight did not,
+        // so the same fact was animated in one place and instant in eight.
+        transition: 'width var(--t-slow) var(--ease-out)',
+      }} />
     </div>
   );
 }
@@ -65,69 +71,71 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
   const free = num(kpi.free_stock);
   const allotted = num(kpi.allotted_stock);
   const onFloor = free + allotted;
-  const over90 = num(kpi.stock_over_90_days);
   const bookings = num(kpi.bookings);
   const backorders = num(kpi.backorders);
   const pending = num(kpi.bookings_missing_crm_entry);
 
   const share = (part, whole) => (whole > 0 ? (part / whole) * 100 : 0);
-  // FIX (2026-10-08): with no target loaded for the month these read
-  // "0.0% of 0 target" (and, before client.js stopped substituting them,
-  // August's targets). They now say there is no target.
-  const ofTarget = (part, whole) =>
-    (whole > 0 ? `${pct(share(part, whole))} of ${n0(whole)} target` : 'No target set');
+  // How many enquiries became bookings. It took the place of ageing stock,
+  // which the Inventory page and the chase list already carry.
+  const conversion = share(bookings, enquiries);
+  // "0.0% of 0 target" for a month whose scorecard sets none.
+  const ofTarget = (part, target, rest = 'target') =>
+    target > 0 ? `${pct(share(part, target))} of ${n0(target)} ${rest}` : 'No target set this month';
 
   const tiles = [
     {
       label: 'Retails Delivered',
-      value: n0(retails),
+      value: retails,
       share: share(retails, retailTarget),
       foot: ofTarget(retails, retailTarget),
     },
     {
       label: 'Total Enquiries',
-      value: n0(enquiries),
+      value: enquiries,
       share: share(enquiries, leadsTarget),
       spark: trends.enquiries,
-      foot: `${leadsTarget > 0 ? `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)}` : 'No target'} · ${n0(kpi.qualified)} qualified`,
+      foot: leadsTarget > 0
+        ? `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)} · ${n0(kpi.qualified)} qualified`
+        : `No target set · ${n0(kpi.qualified)} qualified`,
     },
     {
       label: 'Test Drives',
-      value: n0(testDrives),
+      value: testDrives,
       share: share(testDrives, tdTarget),
       foot: ofTarget(testDrives, tdTarget),
     },
     {
       label: 'Booking Revenue',
-      value: money(kpi.booking_amount_collected),
+      value: num(kpi.booking_amount_collected),
+      format: money,
       spark: trends.bookings,
       sparkColor: 'var(--viz-2)',
       foot: `Advance against ${n0(bookings)} bookings`,
     },
     {
       label: 'Free Stock',
-      value: n0(free),
+      value: free,
       share: share(free, onFloor),
       foot: `of ${n0(onFloor)} on the floor · ${n0(allotted)} allotted`,
     },
     {
-      label: 'Ageing over 90 Days',
-      value: n0(over90),
-      share: share(over90, onFloor),
-      color: 'var(--critical)',
-      foot: `${pct(share(over90, onFloor))} of stock · carries interest`,
-      tone: over90 > 0 ? 'alert' : 'normal',
+      label: 'Enquiry to Booking',
+      value: conversion,
+      format: pct,
+      share: conversion,
+      foot: `${n0(bookings)} bookings from ${n0(enquiries)} enquiries`,
     },
     {
       label: 'Backorders',
-      value: n0(backorders),
+      value: backorders,
       share: share(backorders, bookings),
       color: 'var(--warning)',
       foot: `${pct(share(backorders, bookings))} of bookings await a car`,
     },
     {
       label: 'Pending CRM Punch',
-      value: n0(pending),
+      value: pending,
       share: share(pending, bookings),
       color: pending > 0 ? 'var(--critical)' : 'var(--good)',
       foot: `${pct(share(pending, bookings))} of bookings not in VW systems`,
@@ -140,7 +148,7 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
       {tiles.map(t => (
         <div key={t.label} className="kpi-tile">
           <div className="label">{t.label}</div>
-          <div className="val">{t.value}</div>
+          <div className="val"><Figure value={t.value} format={t.format || n0} /></div>
           <div className="kpi-plot">
             {t.spark
               ? <Spark series={t.spark} color={t.sparkColor || 'var(--viz-1)'} />

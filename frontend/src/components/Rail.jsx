@@ -8,10 +8,12 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import {
   PlusCircle, UserPlus, Compass, KeyRound, UploadCloud, Download,
   RefreshCw, Table, Sun, Moon, Headset, CalendarCog, ChevronDown
 } from 'lucide-react';
+import { connection, justUpdated, CONNECTION } from './connection';
 
 const ENTRIES = [
   { tab: 'booking', label: 'New booking', Icon: PlusCircle },
@@ -113,23 +115,40 @@ export default function Rail({
           <CalendarCog size={13} />
           <span>Manage months</span>
         </button>
-        <span className="live-badge rail-live">
-          <span className={`live-dot ${liveStatus.state === 'down' ? 'down' : ''}`} />
-          {liveStatus.text}
-        </span>
+        {/* The state comes from the same reader the footer uses, so the two
+            can no longer disagree. The word stays ink; only the dot carries
+            colour, and only a dot that means what it says. It moves once, when
+            a change actually lands, instead of breathing forever - a pulse on
+            every frame of every hour is indistinguishable from a pulse that
+            means something. */}
+        {(() => {
+          const state = connection(liveStatus);
+          const { label, tone } = CONNECTION[state];
+          const fresh = justUpdated(liveStatus);
+          return (
+            <span className="live-badge rail-live" data-tone={tone}
+                  role="status" aria-live="polite">
+              <span className={`live-dot ${fresh ? 'is-fresh' : ''}`} aria-hidden="true" />
+              {fresh ? 'Updated just now' : label}
+            </span>
+          );
+        })()}
       </div>
 
-      {/* The map. Anchors rather than scroll hijacking, so the browser's own
-          back button still does what it should. */}
+      {/* The site's navigation. NavLink renders a real anchor with a real
+          href, so the status bar shows where a link goes, middle-click and
+          cmd-click still open a new tab, and the router only intercepts the
+          plain left-click it can handle without breaking any of that. */}
       <nav className="rail-nav">
         {sections.map(s => (
-          <a
+          <NavLink
             key={s.id}
-            href={`#${s.id}`}
-            className={activeSection === s.id ? 'is-here' : ''}
+            to={s.path || `/${s.id}`}
+            end={s.path === '/'}
+            className={({ isActive }) => (isActive ? 'is-here' : '')}
           >
             {s.label}
-          </a>
+          </NavLink>
         ))}
       </nav>
 

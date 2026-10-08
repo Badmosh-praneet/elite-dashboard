@@ -50,6 +50,8 @@ async function fetchBundled(onProgress) {
   if (!res.ok) throw new Error(`bundle unavailable (${res.status})`);
   const d = await res.json();
   if (onProgress) onProgress(DASHBOARD_CALLS);
+  // A month with no targets on its scorecard has none: these used to fall back
+  // to August's (84 / 66 / 450 / 300) and show them as any month's.
   const stage = name => (d.funnel?.stages || []).find(s => s.stage === name)?.target;
   return {
     // FIX (2026-10-08): each target fell back to August 2026's figure (84

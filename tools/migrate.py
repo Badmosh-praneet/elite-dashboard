@@ -66,6 +66,11 @@ PII_COLUMNS = [
     ("dsr", "registration", "customer_name", "scrub"),
     ("dsr", "registration", "nadcon_punched_customer", "scrub"),
     ("public", "enquiries", "full_name", "scrub"),
+    # The test-drive board (db/test_drives.sql).
+    ("dsr", "test_drive_booking", "phone", "redact"),
+    ("dsr", "test_drive_booking", "address", "redact"),
+    ("dsr", "test_drive_booking", "customer", "scrub"),
+    ("dsr", "test_drive_booking", "note", "scrub"),
 ]
 
 FACTS = ["lead", "booking", "test_drive", "allotment", "registration"]

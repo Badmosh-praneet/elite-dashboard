@@ -116,6 +116,12 @@ BEGIN
             ('dsr',    'registration', ARRAY['redact:contact_no', 'redact:email', 'redact:address',
                                              'scrub:customer_name', 'scrub:nadcon_punched_customer']),
             ('dsr',    'allotment',    ARRAY['scrub:remarks', 'scrub:customer_name']),
+            -- The test-drive board (db/test_drives.sql): stores the customer's phone
+            -- and, for a drive at their home, their address. Apply this file AFTER
+            -- db/test_drives.sql, or this table is skipped (it does not exist yet).
+            ('dsr',    'test_drive_booking',
+                                       ARRAY['redact:phone', 'redact:address',
+                                             'scrub:customer', 'scrub:note']),
             -- What the chat agent writes. Named so it sorts before
             -- enquiries_to_lead and runs first: the lead that trigger files is
             -- built from an enquiry row that is already clean.

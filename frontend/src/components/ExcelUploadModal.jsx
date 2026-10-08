@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import useClosing from './useClosing';
 import { X, UploadCloud, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { uploadReportFile, uploadWorkbookInBackground, n0 } from '../api/client';
 
@@ -52,7 +53,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
 
   const fileInputRef = useRef(null);
 
-  if (!isOpen) return null;
+  const { render, leaving } = useClosing(isOpen);
+  if (!render) return null;
 
   const getFormatBadge = (name) => {
     const ext = (name.split('.').pop() || '').toLowerCase();
@@ -107,7 +109,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
         ? await uploadWorkbookInBackground(file, period, uploader,
             job => setStep(job.step || job.state || ''),
             { mode: effectiveMode, covers, coversDate, coversDateEnd })
-        : await uploadReportFile(file, period, uploader, tableType, effectiveMode);
+        : await uploadReportFile(file, period, uploader, tableType);
       setResult(data);
       onUploadComplete(
         data.mode === 'append'
@@ -137,13 +139,10 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
 
   const badge = file ? getFormatBadge(file.name) : null;
   const BadgeIcon = badge?.icon || FileSpreadsheet;
-  // A CSV or text file is only a whole DSR when it is split into [Sheet: ...]
-  // sections; a plain table of bookings, leads or stock is always added.
-  const isTextFile = !!file && !/\.(xlsx|xlsm|xls)$/i.test(file.name);
 
   return (
-    <div className="drawer-scrim" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{
+    <div className={`drawer-scrim ${leaving ? 'is-leaving' : ''}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <div className="xp-panel" style={{
         background: 'var(--surface)',
         border: '1px solid var(--border-strong)',
         borderRadius: 'var(--radius-lg)',
@@ -154,7 +153,6 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        animation: 'popIn 0.2s ease',
       }}>
         <div style={{
           padding: '18px 24px',
@@ -164,8 +162,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           alignItems: 'center',
         }}>
           <div>
-            <h2 style={{ fontSize: '16px' }}>Ingest DSR Report</h2>
-            <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--ink-muted)' }}>
+            <h2 style={{ fontSize: 'var(--fs-head)' }}>Ingest DSR Report</h2>
+            <p style={{ margin: '2px 0 0', fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               Loads bookings, stock, enquiries and targets. Choose below whether it
               replaces the month or is added to it.
             </p>
@@ -189,14 +187,14 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               textAlign: 'center',
               background: dragOver ? 'var(--s1-light)' : 'var(--surface-sub)',
               cursor: 'pointer',
-              transition: 'all 0.15s ease',
+              transition: 'border-color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out)',
             }}
           >
             <BadgeIcon size={36} style={{ color: file ? 'var(--s1)' : 'var(--ink-muted)', marginBottom: '8px' }} />
-            <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>
+            <div style={{ fontWeight: '600', fontSize: 'var(--fs-body)', marginBottom: '4px' }}>
               {file ? file.name : 'Drop report file here, or browse'}
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--ink-muted)' }}>
+            <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
               {file
                 ? `${(file.size / 1024).toFixed(1)} KB`
                 : 'Supports Excel (.xlsx, .xlsm), CSV (.csv), and Text (.txt, .tsv)'}
@@ -208,7 +206,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   display: 'inline-block',
                   padding: '3px 10px',
                   borderRadius: '999px',
-                  fontSize: '11.5px',
+                  fontSize: 'var(--fs-small)',
                   fontWeight: '700',
                   background: badge.bg,
                   color: badge.color,
@@ -230,7 +228,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
           {/* How this file meets the month already in the database. */}
           <div>
             <div style={{
-              fontSize: 12, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
+              fontSize: 'var(--fs-small)', fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
             }}>How to apply it</div>
             <div style={{ display: 'flex', gap: 8 }}>
               {[
@@ -257,10 +255,10 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                       cursor: locked ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    <b style={{ fontSize: 12.5, color: on ? 'var(--s1)' : 'var(--ink)' }}>
+                    <b style={{ fontSize: 'var(--fs-small)', color: on ? 'var(--s1)' : 'var(--ink)' }}>
                       {o.title}
                     </b>
-                    <span style={{ fontSize: 11, color: 'var(--ink-muted)', lineHeight: 1.4 }}>
+                    <span style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', lineHeight: 1.4 }}>
                       {o.note}
                     </span>
                   </button>
@@ -274,7 +272,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               chooses that month, and appending is the only safe pairing. */}
           <div>
             <div style={{
-              fontSize: 12, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
+              fontSize: 'var(--fs-small)', fontWeight: 500, color: 'var(--ink-2)', marginBottom: 6,
             }}>This file covers</div>
             <div style={{ display: 'flex', gap: 6, marginBottom: needsDate ? 10 : 0 }}>
               {['day', 'week', 'month'].map(c => (
@@ -285,7 +283,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   aria-pressed={covers === c}
                   style={{
                     flex: 1, textTransform: 'capitalize', padding: '7px 10px',
-                    fontSize: 12.5,
+                    fontSize: 'var(--fs-small)',
                     background: covers === c ? 'var(--s1-light)' : 'var(--surface-sub)',
                     borderColor: covers === c ? 'var(--s1)' : 'var(--border)',
                     color: covers === c ? 'var(--s1)' : 'var(--ink-2)',
@@ -332,12 +330,12 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                   </label>
                 </div>
                 {rangeBackwards && (
-                  <div style={{ fontSize: 11.5, color: 'var(--critical)', marginTop: 6 }}>
+                  <div style={{ fontSize: 'var(--fs-small)', color: 'var(--critical)', marginTop: 6 }}>
                     The end date is before the start date.
                   </div>
                 )}
                 {rangeCrossesMonths && (
-                  <div style={{ fontSize: 11.5, color: 'var(--warning)', marginTop: 6 }}>
+                  <div style={{ fontSize: 'var(--fs-small)', color: 'var(--warning)', marginTop: 6 }}>
                     This week spans two months. It will be filed under{' '}
                     <b>{new Date(`${coversDate}T00:00:00Z`).toLocaleDateString('en-IN',
                         { month: 'long', year: 'numeric', timeZone: 'UTC' })}</b>,
@@ -368,23 +366,13 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
             </label>
           </div>
 
-          {/* FIX (2026-10-08): this warning was wrong in two ways.
-              1. For "Replace the month" it quoted the figures for DELETING the
-                 month (every row filed under it, hand-entered ones included)
-                 and said hand-entered rows "will also be replaced". A replace
-                 upload actually removes only the rows this month's previous
-                 uploads produced, plus its targets, and keeps hand-entered
-                 rows (etl/load_dsr.py reset()). It now quotes exactly that,
-                 from replaced_by_upload / kept_on_upload (app/entry.py).
-              2. For a CSV it said the month would be replaced, but a plain
-                 table is always added to the month. It now says so. */}
           {replacing && (
             <div style={{
               border: '1px solid ' + (replacing.missing ? 'var(--grid)' : 'var(--warning)'),
               background: replacing.missing ? 'var(--surface-sub)' : 'var(--critical-light)',
               borderRadius: 'var(--radius-sm)',
               padding: '11px 14px',
-              fontSize: '12.5px',
+              fontSize: 'var(--fs-small)',
               lineHeight: 1.6,
             }}>
               {replacing.missing ? (
@@ -395,32 +383,26 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                 effectiveMode === 'append' ? (
                 <>
                   This <b>adds to</b> <b>{replacing.label}</b>, which currently holds{' '}
-                  {n0(replacing.total)} rows. Nothing existing is removed.
-                  {isTextFile
-                    ? <> A plain CSV table is added as-is, so sending the same file twice adds its rows twice.</>
-                    : <> Rows identical to ones already there are skipped, so re-sending the same file is safe.</>}
+                  {n0(replacing.total)} rows. Nothing existing is removed. Rows identical
+                  to ones already there are skipped, so re-sending the same file is safe.
                 </>
               ) : (
                 <>
-                  {isTextFile && (
-                    <div style={{ marginBottom: 6 }}>
-                      A plain CSV table (bookings, leads or stock) is always <b>added</b> to the month.
-                      Only a full DSR split into <code>[Sheet: …]</code> sections replaces it, as below.
-                    </div>
-                  )}
-                  This <b>replaces</b> what earlier uploads loaded into <b>{replacing.label}</b>
-                  {replacing.replaced_by_upload_total > 0
-                    ? <> &mdash; {n0(replacing.replaced_by_upload_total)} rows
-                        {replacing.replaced_by_upload && Object.keys(replacing.replaced_by_upload).length > 0 && (
-                          <> ({Object.entries(replacing.replaced_by_upload)
-                              .map(([k, v]) => `${n0(v)} ${k.replace(/^target_/, '').replace(/_/g, ' ')}`)
+                  This <b>replaces</b> what workbooks loaded into <b>{replacing.label}</b>
+                  {(replacing.replaces_total ?? replacing.total) > 0
+                    ? <> &mdash; {n0(replacing.replaces_total ?? replacing.total)} rows
+                        {(replacing.replaces || replacing.counts)
+                          && Object.keys(replacing.replaces || replacing.counts).length > 0 && (
+                          <> ({Object.entries(replacing.replaces || replacing.counts)
+                              .map(([k, v]) => `${n0(v)} ${k.replace(/_/g, ' ')}`)
                               .join(', ')})</>
                         )}. It is not added alongside.</>
-                    : <>, which has nothing loaded from a file yet.</>}
-                  {replacing.kept_on_upload > 0 && (
-                    <div style={{ color: 'var(--good-text)', marginTop: 6 }}>
-                      {n0(replacing.kept_on_upload)} rows entered by hand on the dashboard
-                      are kept.
+                    : <>, which holds nothing from a workbook yet.</>}
+                  {replacing.hand_entered > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      {n0(replacing.hand_entered)} {replacing.hand_entered === 1 ? 'row' : 'rows'} entered
+                      by hand on the dashboard {replacing.hand_entered === 1 ? 'is' : 'are'} kept: a
+                      replace only removes what a workbook loaded.
                     </div>
                   )}
                 </>
@@ -444,7 +426,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               display: 'flex',
               alignItems: 'center',
               gap: '12px',
-              fontSize: '13px',
+              fontSize: 'var(--fs-body)',
             }}>
               <Loader2 size={20} className="animate-spin" style={{ color: 'var(--s1)' }} />
               <div>
@@ -457,7 +439,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                     half. Without saying so, a spinner at 60 seconds is
                     indistinguishable from a hung one, and people close the tab
                     on an ingest that was going to succeed. */}
-                <div style={{ fontSize: '11.5px', color: 'var(--ink-muted)' }}>
+                <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
                   {step ? step.charAt(0).toUpperCase() + step.slice(1) + ' — ' : ''}
                   {elapsed < 120
                     ? 'this usually takes about two minutes. Leave this open.'
@@ -474,7 +456,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               borderRadius: '8px',
               padding: '12px 14px',
               color: 'var(--critical)',
-              fontSize: '12.5px',
+              fontSize: 'var(--fs-small)',
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
@@ -490,7 +472,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
               border: '1px solid var(--s3)',
               borderRadius: '8px',
               padding: '14px',
-              fontSize: '12.5px',
+              fontSize: 'var(--fs-small)',
             }}>
               <div style={{ fontWeight: '700', color: 'var(--good-text)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                 <CheckCircle2 size={16} />
@@ -502,8 +484,8 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                     background: 'var(--surface)', padding: '6px 10px', borderRadius: '4px', 
                     border: '1px solid var(--border)', wordBreak: 'break-word', lineHeight: '1.4'
                   }}>
-                    <b style={{ display: 'block', fontSize: '14px', marginBottom: '2px' }}>{cnt}</b> 
-                    <span style={{ color: 'var(--ink-muted)', fontSize: '11px', textTransform: 'uppercase' }}>{tbl}</span>
+                    <b style={{ display: 'block', fontSize: 'var(--fs-body)', marginBottom: '2px' }}>{cnt}</b> 
+                    <span style={{ color: 'var(--ink-muted)', fontSize: 'var(--fs-small)', textTransform: 'uppercase' }}>{tbl}</span>
                   </div>
                 ))}
               </div>

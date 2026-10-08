@@ -11,6 +11,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import useClosing from './useClosing';
 import { X, Trash2, Eraser, AlertTriangle } from 'lucide-react';
 import { api, sendJson, n0, dt } from '../api/client';
 
@@ -26,7 +27,8 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
     if (!isOpen) { setTarget(null); setContents(null); setTyped(''); setError(null); }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  const { render, leaving } = useClosing(isOpen);
+  if (!render) return null;
 
   const ask = async (label, how = 'delete') => {
     setTarget(label); setMode(how); setTyped(''); setError(null); setContents(null);
@@ -61,27 +63,24 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
 
   return (
     <div
-      className="drawer-scrim"
+      className={`drawer-scrim ${leaving ? 'is-leaving' : ''}`}
       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{
+      <div className="xp-panel" style={{
         background: 'var(--surface)', border: '1px solid var(--axis)',
         borderRadius: 'var(--radius-lg)', maxWidth: 560, width: '100%',
         maxHeight: '88vh', boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
-        display: 'flex', flexDirection: 'column', animation: 'popIn 0.2s ease',
+        display: 'flex', flexDirection: 'column',
       }}>
         <div style={{
           padding: '18px 24px', borderBottom: '1px solid var(--grid)',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <div>
-            <h2 style={{ fontSize: 16 }}>Reporting months</h2>
-            {/* FIX (2026-10-08): said uploads always replace the month and are
-                "never added alongside", which stopped being true when the
-                upload dialog gained "Add to the month". */}
-            <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3 }}>
-              An upload either replaces what earlier uploads put in its month or adds to it &mdash; the upload dialog asks which
+            <h2 style={{ fontSize: 'var(--fs-head)' }}>Reporting months</h2>
+            <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 3 }}>
+              Uploading a workbook replaces the month it belongs to &mdash; it is never added alongside
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ padding: '6px 8px' }}>
@@ -98,23 +97,23 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
                 borderBottom: '1px solid var(--grid)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 15 }}>
+                  <span style={{ fontSize: 'var(--fs-lead)', fontWeight: 600 }}>
                     {p.label}
                   </span>
                   {p.is_active && (
                     <span style={{
-                      fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+                      fontSize: 'var(--fs-micro)', letterSpacing: '0.12em', textTransform: 'uppercase',
                       color: 'var(--shu-ink)', border: '1px solid var(--shu)',
                       borderRadius: 2, padding: '1px 6px',
                     }}>
                       Showing now
                     </span>
                   )}
-                  <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-muted)' }}>
+                  <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-small)', color: 'var(--ink-muted)' }}>
                     {n0(p.leads)} enquiries &middot; {n0(p.bookings)} bookings
                   </span>
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 4 }}>
                   {dt(p.period_start)} &ndash; {dt(p.period_end)}
                 </div>
 
@@ -139,7 +138,7 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
                   </div>
                 )}
                 {p.is_active && !isTarget && (
-                  <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 8 }}>
+                  <div style={{ fontSize: 'var(--fs-small)', color: 'var(--ink-muted)', marginTop: 8 }}>
                     To remove this month entirely, switch to another one first.
                   </div>
                 )}
@@ -153,7 +152,7 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
                   }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                       <AlertTriangle size={14} style={{ color: 'var(--critical)', flex: 'none', marginTop: 2 }} />
-                      <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                      <div style={{ fontSize: 'var(--fs-small)', lineHeight: 1.6 }}>
                         {contents ? (
                           <>
                             This removes <b>{n0(contents.total)} rows</b> from {p.label}
@@ -205,7 +204,7 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
                     </div>
 
                     {error && (
-                      <div style={{ marginTop: 10, fontSize: 12, color: 'var(--critical)' }}>
+                      <div style={{ marginTop: 10, fontSize: 'var(--fs-small)', color: 'var(--critical)' }}>
                         {error}
                       </div>
                     )}
@@ -216,7 +215,7 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
           })}
 
           {!ordered.length && (
-            <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--ink-muted)', fontSize: 13 }}>
+            <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--ink-muted)', fontSize: 'var(--fs-body)' }}>
               No months on record yet.
             </div>
           )}

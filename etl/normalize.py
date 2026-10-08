@@ -378,6 +378,20 @@ def car_origin(value) -> str | None:
     return CAR_ORIGIN_MAP.get(upper(value) or "")
 
 
+def chassis(value) -> str | None:
+    """A chassis number (VIN), or None when the cell holds something else.
+
+    A chassis has no spaces: 10 to 20 letters and digits, with at least one of
+    each. A September upload carried customers' names in the chassis column,
+    and keyed on chassis that made a second "car" for every name - a hundred
+    phantom units counted as stock."""
+    text = (upper(value) or "").replace(" ", "")       # a stray space in a real chassis
+    if text and re.fullmatch(r"[A-Z0-9]{10,20}", text) \
+            and re.search(r"[0-9]", text) and re.search(r"[A-Z]", text):
+        return text
+    return None
+
+
 def mobile(value) -> str | None:
     """Keep digits only, and drop anything that is not a plausible Indian mobile."""
     text = clean(value)

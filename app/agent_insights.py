@@ -207,18 +207,28 @@ def leads_summary(month: str | None = None, date_from: str | None = None,
     return out
 
 
+# A month's retails: the registrations its workbook listed - each workbook's
+# registration tab is that month's retails, and its scorecard counts exactly
+# those rows - plus any entered by hand during the month. As the dashboard
+# counts them (db/views.sql); counted over every load, August and September
+# ran together and Sanjeev had 7 August retails against the workbook's 4.
+_RETAILED_IN_MONTH = """rg.status = 'REGISTERED'
+       AND (rg.load_period_id = %(p)s
+            OR (rg.load_period_id IS NULL
+                AND (rg.loaded_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN %(lo)s AND %(hi)s))"""
+
+
 def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
     """Consultants ranked as the People page ranks them - by bookings, then
     retails - for any month, with their booking target where the month's
-    workbook set one. Retails are the dashboard's own figure and come with the
-    month the dashboard is set to only."""
+    workbook set one."""
     m = resolve_month(month)
     about = _note(m)
     if m["period_id"] is None:
         return {**about, "consultants": [], "note": f"Nothing has been filed under {m['month']} yet.",
                 "answer": f"No bookings recorded for {when(m)}."}
     with session() as cx:
-        rows = cx.execute("""
+        rows = cx.execute(f"""
             SELECT c.display_name AS consultant, t.name AS team,
                    (SELECT count(*) FROM booking b
                      WHERE b.consultant_id = c.consultant_id AND b.period_id = %(p)s) AS bookings,
@@ -234,18 +244,13 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
                    (SELECT max(sc.booking_target) FROM target_consultant_scorecard sc
                      WHERE sc.consultant_id = c.consultant_id AND sc.period_id = %(p)s
                        AND sc.is_primary_channel) AS booking_target,
-                   -- The People page breaks a tie on bookings by retails, which it
-                   -- counts over every month; the same count, for the same order.
+                   -- The People page breaks a tie on bookings by retails.
                    (SELECT count(*) FROM registration rg
                      WHERE rg.consultant_id = c.consultant_id
-                       AND rg.status = 'REGISTERED') AS retails_ever
+                       AND {_RETAILED_IN_MONTH}) AS retails
               FROM dim_consultant c
               LEFT JOIN dim_team t ON t.team_id = c.team_id
-             WHERE c.is_active""", {"p": m["period_id"]}).fetchall()
-        retails = {}
-        if m["month"] == m["dashboard_month"]:
-            retails = {r["consultant"]: r["retail_achieved"] for r in cx.execute(
-                "SELECT consultant, retail_achieved FROM v_consultant_leaderboard").fetchall()}
+             WHERE c.is_active""", {"p": m["period_id"], "lo": m["from"], "hi": m["to"]}).fetchall()
     board = []
     for r in rows:
         if not (r["bookings"] or r["enquiries"] or r["booking_target"]):
@@ -254,17 +259,14 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
         entry = {"consultant": r["consultant"], "team": r["team"], "bookings": r["bookings"],
                  "booking_target": target,
                  "pct_of_target": round(100 * r["bookings"] / target) if target else None,
-                 "enquiries": int(r["enquiries"] or 0), "_tie": r["retails_ever"]}
-        if retails:
-            entry["retails"] = int(retails.get(r["consultant"]) or 0)
+                 "enquiries": int(r["enquiries"] or 0), "retails": int(r["retails"] or 0)}
         board.append(entry)
     # The page's order: bookings, then retails, then - as its rows arrive from
     # v_consultant_leaderboard - furthest behind booking target first.
-    board.sort(key=lambda e: (-e["bookings"], -e["_tie"],
+    board.sort(key=lambda e: (-e["bookings"], -e["retails"],
                               e["bookings"] - (e["booking_target"] or 0), e["consultant"]))
     for i, e in enumerate(board, 1):
         e["rank"] = i
-        del e["_tie"]
     top = max(1, min(int(top or 10), 50))
     shown = board[:top]
     answer = (f"Top {len(shown)} consultant{'s' if len(shown) != 1 else ''} by bookings, {when(m)}: "
@@ -451,3 +453,101 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
     keep = ("note", "dashboard_month", "calendar_month", "month")
     return {"ranking": title, "period": period, **{k: v for k, v in about.items() if k in keep},
             "rows": rows, "answer": answer}
+
+
+# ------------------------------------------------------------ scorecards
+
+_CARD = ("leads_target", "total_leads", "td_target", "td_achieved", "booking_target", "booking_achieved",
+         "retail_target", "retail_achieved", "finance_target", "finance_achieved",
+         "insurance_target", "insurance_achieved")
+
+
+def _num(v):
+    if v is None:
+        return None
+    f = float(v)
+    return int(f) if f.is_integer() else round(f, 1)
+
+
+def consultant_scorecard(name: str, month: str | None = None) -> dict:
+    """One consultant's scorecard - enquiries, test drives, bookings, retails,
+    finance and insurance against target - for any month that has one.
+
+    The scorecard comes from the month's workbook, and is the dealership's own
+    record of a consultant's test drives: the Test Drives section began on
+    6 Oct 2026, so asked for Sanjeev's September test drives the agent found
+    none there and answered 0 - the scorecard says 10. With no month, the
+    latest month with a scorecard; for the month the dashboard is set to, the
+    People page's own figures."""
+    with session() as cx:
+        months = [r["label"] for r in cx.execute("""
+            SELECT p.label FROM dim_period p
+             WHERE EXISTS (SELECT 1 FROM target_consultant_scorecard t WHERE t.period_id = p.period_id)
+             ORDER BY p.period_start DESC""").fetchall()]
+    if not months:
+        raise HTTPException(404, "No scorecards have been loaded.")
+    m = resolve_month(month or months[0])
+    have = ", ".join(when({"month": x, "period_id": 0}) for x in months)
+    if m["month"] not in months:
+        return {**_note(m), "answer": f"No scorecard for {when(m)} yet - its workbook has not been loaded. "
+                                      f"Scorecards: {have}."}
+    with session() as cx:
+        people = cx.execute("""SELECT consultant_id, display_name FROM dim_consultant
+                                WHERE display_name ILIKE %s ORDER BY is_active DESC, display_name""",
+                            (f"%{name.strip()}%",)).fetchall()
+        if not people:
+            raise HTTPException(404, f"No consultant matching {name!r}.")
+        cards = []
+        for c in people[:3]:
+            if m["month"] == m["dashboard_month"]:
+                r = cx.execute("SELECT * FROM v_consultant_scorecard WHERE row_kind = 'CONSULTANT' AND consultant = %s",
+                               (c["display_name"],)).fetchone()
+                if not r:
+                    continue
+                card = {k: _num(r[k]) for k in _CARD}
+            else:
+                r = cx.execute("""
+                    SELECT max(leads_target)       FILTER (WHERE is_primary_channel) AS leads_target,
+                           sum(total_leads)                                          AS total_leads,
+                           max(td_target)          FILTER (WHERE is_primary_channel) AS td_target,
+                           sum(td_achieved)                                          AS td_achieved,
+                           max(booking_target)     FILTER (WHERE is_primary_channel) AS booking_target,
+                           max(retail_target)      FILTER (WHERE is_primary_channel) AS retail_target,
+                           sum(retail_achieved)                                      AS retail_achieved,
+                           max(finance_target)     FILTER (WHERE is_primary_channel) AS finance_target,
+                           max(finance_achieved)   FILTER (WHERE is_primary_channel) AS finance_achieved,
+                           max(insurance_target)   FILTER (WHERE is_primary_channel) AS insurance_target,
+                           max(insurance_achieved) FILTER (WHERE is_primary_channel) AS insurance_achieved,
+                           count(*) AS n
+                      FROM target_consultant_scorecard
+                     WHERE consultant_id = %s AND period_id = %s AND row_kind = 'CONSULTANT'""",
+                    (c["consultant_id"], m["period_id"])).fetchone()
+                if not r["n"]:
+                    continue
+                card = {k: _num(r[k]) for k in _CARD if k != "booking_achieved"}
+                # Bookings and enquiries as the People page counts them for its month.
+                card["booking_achieved"] = cx.execute(
+                    "SELECT count(*) AS n FROM booking WHERE consultant_id = %s AND period_id = %s",
+                    (c["consultant_id"], m["period_id"])).fetchone()["n"]
+                card["total_leads"] = (card["total_leads"] or 0) + cx.execute(
+                    "SELECT count(*) AS n FROM lead WHERE consultant_id = %s AND period_id = %s AND origin = 'MANUAL'",
+                    (c["consultant_id"], m["period_id"])).fetchone()["n"]
+            card["retail_achieved"] = cx.execute(
+                f"SELECT count(*) AS n FROM registration rg WHERE rg.consultant_id = %(c)s AND {_RETAILED_IN_MONTH}",
+                {"c": c["consultant_id"], "p": m["period_id"], "lo": m["from"], "hi": m["to"]}).fetchone()["n"]
+            card["consultant"] = c["display_name"]
+            cards.append(card)
+    if not cards:
+        return {**_note(m), "answer": f"No scorecard row for {name} in {when(m)}."}
+
+    def of(done, target, what):
+        return f"{done or 0} {what}" + (f" (target {target})" if target is not None else "")
+
+    first = cards[0]
+    answer = (f"{first['consultant']}, {when(m)}: " + ", ".join((
+        of(first["td_achieved"], first["td_target"], "test drives"),
+        of(first["booking_achieved"], first["booking_target"], "bookings"),
+        of(first["retail_achieved"], first["retail_target"], "retails"),
+        of(first["total_leads"], first["leads_target"], "enquiries"))) + ".")
+    return {**_note(m), "scorecards": cards, "answer": answer,
+            "source": "The month's DSR scorecard - the dealership's record of each consultant's test drives."}

@@ -128,12 +128,21 @@ orders AS (
     WHERE b.is_current_period
     GROUP BY m.family
 ),
+-- A month's retails, here and everywhere else: the registrations its workbook
+-- listed (load_period_id), plus any entered by hand during it. Each workbook's
+-- registration tab is that month's retails - its scorecard's retail column
+-- counts exactly those rows - so counting every load put months together.
 retails AS (
     SELECT m.family, count(*) AS registered
     FROM registration r
     JOIN vehicle v   ON v.vehicle_id = r.vehicle_id
     JOIN dim_model m ON m.model_id   = v.model_id
+    JOIN dim_period ap ON ap.is_active
     WHERE r.status = 'REGISTERED'
+      AND (r.load_period_id = ap.period_id
+           OR (r.load_period_id IS NULL
+               AND (r.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+                   BETWEEN ap.period_start AND ap.period_end))
     GROUP BY m.family
 )
 SELECT f.family                                AS model,
@@ -292,7 +301,10 @@ LEFT JOIN (
 -- booking entered through the dashboard moves the leaderboard immediately. This
 -- is safe because the two agree exactly on load: every consultant's workbook
 -- booking_achieved and retail_achieved matches their row count in booking and
--- registration, to the unit.
+-- registration, to the unit - counting the month's rows only. Registrations
+-- carry no business month, so a month's are the ones its workbook listed (see
+-- v_model_position); counted over every load, Sanjeev had 7 retails in August
+-- against the workbook's 4, the other 3 being September's.
 --
 -- Enquiries and test drives are the exception and are baseline + live:
 --   * the August lead export carries no consultant, so 367 of 367 leads are
@@ -331,8 +343,13 @@ per_consultant AS (
            (SELECT count(*) FROM booking b
              WHERE b.consultant_id = c.consultant_id AND b.is_current_period)   AS bookings,
            (SELECT count(*) FROM registration rg
+              JOIN dim_period ap ON ap.is_active
              WHERE rg.consultant_id = c.consultant_id
-               AND rg.status = 'REGISTERED')                                     AS retails,
+               AND rg.status = 'REGISTERED'
+               AND (rg.load_period_id = ap.period_id
+                    OR (rg.load_period_id IS NULL
+                        AND (rg.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+                            BETWEEN ap.period_start AND ap.period_end)))         AS retails,
            (SELECT count(*) FROM lead l
              WHERE l.consultant_id = c.consultant_id
                AND l.is_current_period AND l.origin = 'MANUAL')                  AS leads_added,
@@ -361,7 +378,11 @@ per_rollup AS (
           AND upper(r.row_label) LIKE '%' || upper(COALESCE(
                 (SELECT name FROM dim_team dt WHERE dt.team_id = c.team_id), '~none~')) || '%')
     JOIN per_consultant pc ON pc.consultant_id = c.consultant_id
+    -- The dashboard's month's total rows only. Every month loaded has a TOTAL
+    -- row and the same team rows, so joining all of them counted each
+    -- consultant once per month: August's grand total read 84 bookings for 42.
     WHERE r.row_kind IN ('TEAM_TOTAL', 'GRAND_TOTAL')
+      AND r.period_id = (SELECT period_id FROM dim_period WHERE is_active)
     GROUP BY r.row_label
 ),
 live AS (
@@ -460,16 +481,22 @@ SELECT p.label AS period,
          WHERE is_current_period)                                       AS enquiries,
        (SELECT count(*) FROM lead
          WHERE is_current_period AND qualified_stage = 'Qualified')      AS qualified,
+       -- This month's grand total. Summed over every month's, August read 204 -
+       -- its own 128 plus September's 76.
        (SELECT COALESCE(sum(td_achieved), 0) FROM target_consultant_scorecard
-         WHERE row_kind = 'GRAND_TOTAL')
+         WHERE row_kind = 'GRAND_TOTAL' AND period_id = p.period_id)
        + (SELECT count(*) FROM test_drive
            WHERE origin = 'MANUAL'
              AND (td_date IS NULL
                   OR td_date BETWEEN p.period_start AND p.period_end))   AS test_drives,
        (SELECT count(*) FROM booking
          WHERE is_current_period)                                        AS bookings,
-       (SELECT count(*) FROM registration
-         WHERE status = 'REGISTERED')                                    AS retails
+       (SELECT count(*) FROM registration r
+         WHERE r.status = 'REGISTERED'
+           AND (r.load_period_id = p.period_id
+                OR (r.load_period_id IS NULL
+                    AND (r.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+                        BETWEEN p.period_start AND p.period_end)))       AS retails
 FROM dim_period p
 -- Exactly one row: the month the dashboard is reporting on.
 WHERE p.is_active;
@@ -493,7 +520,8 @@ SELECT f.period,
        (SELECT count(*) FROM booking
          WHERE is_current_period AND crm_entry_done IS FALSE)          AS bookings_missing_crm_entry,
        (SELECT sum(booking_amount) FROM booking WHERE is_current_period) AS booking_amount_collected,
-       (SELECT round(avg(tat_days), 1) FROM allotment)                 AS avg_allotment_tat_days
+       (SELECT round(avg(tat_days), 1) FROM allotment
+         WHERE load_period_id = (SELECT period_id FROM dim_period WHERE is_active)) AS avg_allotment_tat_days
 FROM v_sales_funnel f;
 
 -- Attachment mix on retailed cars: finance, insurance, extended warranty, SVP.
@@ -511,8 +539,13 @@ SELECT count(*)                                                        AS regist
              / NULLIF(count(*), 0), 1)                                  AS finance_pct,
        round(100.0 * count(*) FILTER (WHERE has_insurance)
              / NULLIF(count(*), 0), 1)                                  AS insurance_pct
-FROM registration
-WHERE status = 'REGISTERED';
+FROM registration r
+JOIN dim_period ap ON ap.is_active
+WHERE r.status = 'REGISTERED'
+  AND (r.load_period_id = ap.period_id
+       OR (r.load_period_id IS NULL
+           AND (r.loaded_at AT TIME ZONE 'Asia/Kolkata')::date
+               BETWEEN ap.period_start AND ap.period_end));
 
 -- How long a completed deal takes to clear the back office.
 CREATE OR REPLACE VIEW v_folder_tat AS

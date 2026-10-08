@@ -93,11 +93,11 @@ def _tool_get_dealership_snapshot(args: dict) -> Any:
 
 
 def _tool_get_consultant_scorecard(args: dict) -> Any:
-    from .main import agent_consultant
+    from .agent_insights import consultant_scorecard
     name = args.get("name")
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    return _dashboard_month_note(agent_consultant(name=name))
+    return consultant_scorecard(name, args.get("month"))
 
 
 def _period_arg(args: dict) -> str:
@@ -308,6 +308,7 @@ def _tool_get_test_drives(args: dict) -> Any:
         include_samples=_yes(args.get("include_samples")),
         limit=int(args.get("limit") or 60),
         month=args.get("month"),
+        executive=args.get("executive"),
     )
 
 
@@ -369,10 +370,13 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_consultant_scorecard",
-        "description": "One sales consultant's full scorecard against target (enquiries, test drives, bookings, retails, finance, insurance) for the month the dashboard is set to; the reply says which month. To rank consultants, use get_consultant_leaderboard.",
+        "description": "One sales consultant's scorecard against target - test drives, bookings, retails, enquiries, finance, insurance - for a month (default: the latest month with a scorecard). Use it for 'how many test drives did <consultant> do in <month>': the scorecard is the dealership's record of a consultant's test drives; the Test Drives section only began on 6 Oct 2026. To rank consultants, use get_top.",
         "input_schema": {
             "type": "object",
-            "properties": {"name": {"type": "string", "description": "Consultant name, full or partial"}},
+            "properties": {
+                "name": {"type": "string", "description": "Consultant name, full or partial"},
+                "month": {"type": "string", "description": "A month name or label like 'September' / 'SEP2026', 'last', or 'active'; leave out for the latest scorecard"},
+            },
             "required": ["name"],
         },
     },
@@ -492,6 +496,7 @@ TOOLS: list[dict] = [
                 "month": {"type": "string", "description": "A whole month instead: 'current' (this calendar month), 'last', or a month name or label like 'October' / 'OCT2026'"},
                 "status": {"type": "string", "description": "bookings (any drive given a slot), booked, attended, no_show, cancelled or enquiry; omit for all"},
                 "car": {"type": "string", "description": "Taigun, Virtus, Tayron, Tiguan R-Line or Golf GTI"},
+                "executive": {"type": "string", "description": "A sales executive's name, full or partial: only their drives, counted"},
                 "search": {"type": "string", "description": "Customer name, or 4+ digits of their phone"},
                 "include_samples": {"type": "boolean", "description": "Include the made-up sample drives (default true)"},
                 "limit": {"type": "integer", "description": "Max drives listed, default 60"},

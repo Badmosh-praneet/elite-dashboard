@@ -669,7 +669,8 @@ def _tally(rows: list[dict]) -> dict:
 
 def agent_test_drives(date_: str | None = None, date_from: str | None = None, date_to: str | None = None,
                       status: str | None = None, car: str | None = None, search: str | None = None,
-                      include_samples: bool = True, limit: int = 60, month: str | None = None) -> dict:
+                      include_samples: bool = True, limit: int = 60, month: str | None = None,
+                      executive: str | None = None) -> dict:
     """Test drives on a day, a span of days or a month (default today), as the
     calendar shows them: drives in their slots, and enquiries on the day they
     ask for or, with no day yet, the day they came in. Filters: status, car,
@@ -706,6 +707,9 @@ def agent_test_drives(date_: str | None = None, date_from: str | None = None, da
     if car and car.strip():
         where.append("car_id = %s")
         params.append(_car_named(car, cars))
+    if executive and executive.strip():
+        where.append("consultant ILIKE %s")
+        params.append("%" + re.sub(r"([\\%_])", r"\\\1", executive.strip()) + "%")
     if search and search.strip():
         text = search.strip()
         digits = re.sub(r"\D", "", text)

@@ -101,11 +101,14 @@ def _tool_get_vehicle_availability(args: dict) -> Any:
 
 def _tool_get_order_status(args: dict) -> Any:
     from .main import agent_order_status
+    # PII POLICY (2026-10-08): phone numbers are not stored, so the lookup is
+    # by name only (see agent_order_status in app/main.py).
     name = args.get("name")
-    mobile = args.get("mobile")
-    if not name and not mobile:
-        raise HTTPException(status_code=400, detail="pass either name or mobile")
-    return agent_order_status(name=name, mobile=mobile)
+    if not name:
+        raise HTTPException(status_code=400,
+                            detail="Ask the customer for the name on the booking - "
+                                   "phone numbers are not stored, so orders are found by name.")
+    return agent_order_status(name=name, mobile=None)
 
 
 def _tool_get_model_catalogue(args: dict) -> Any:
@@ -167,13 +170,17 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_order_status",
-        "description": "A customer's booking/order status - pass their name and/or mobile number.",
+        # PII POLICY (2026-10-08): was "name and/or mobile number". Phone
+        # numbers are not stored, so the tool takes a name only - which also
+        # stops the agent sending the customer's number to this server at all.
+        "description": "A customer's booking/order status, found by the name on the booking. "
+                       "Phone numbers and emails are not stored, so ask for the name.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Customer name, full or partial"},
-                "mobile": {"type": "string", "description": "10-digit mobile number"},
             },
+            "required": ["name"],
         },
     },
     {
@@ -190,7 +197,7 @@ TOOLS: list[dict] = [
                 "limit": {"type": "integer", "description": "Max rows, default 50"},
                 "status": {"type": "string", "description": "Lead status, default 'New'"},
                 "period": {"type": "string", "description": "'active' (default), a month label like 'AUG2026', or 'all'"},
-                "search": {"type": "string", "description": "Matches lead name or mobile"},
+                "search": {"type": "string", "description": "Matches the lead's name"},
             },
         },
     },
@@ -202,12 +209,20 @@ TOOLS: list[dict] = [
             "properties": {
                 "limit": {"type": "integer", "description": "Max rows, default 50"},
                 "period": {"type": "string", "description": "'active' (default), a month label like 'AUG2026', or 'all'"},
-                "search": {"type": "string", "description": "Matches customer name or mobile"},
+                "search": {"type": "string", "description": "Matches the customer's name"},
                 "status": {"type": "string", "description": "fulfilment_status: BOOKED / NO_STOCK / ALLOTED / RETAILED / CANCELLED"},
             },
         },
     },
 ]
+
+# FIX (2026-10-08): tools/list sent only `input_schema`. That is the key
+# Perfox's own docs ask for, but the MCP specification - and therefore any
+# standard MCP client pointed at this server - reads `inputSchema`, and sees a
+# tool with no arguments. Both keys are now sent, so Perfox keeps working
+# unchanged and spec clients get the schema too.
+for _tool in TOOLS:
+    _tool["inputSchema"] = _tool["input_schema"]
 
 TOOL_HANDLERS: dict[str, Callable[[dict], Any]] = {
     "get_dealership_snapshot": _tool_get_dealership_snapshot,
@@ -264,8 +279,17 @@ def mcp_rpc(body: JsonRpcRequest) -> dict:
                 "content": [{"type": "text", "text": str(exc)}],
                 "isError": True,
             })
+        # FIX (2026-10-08): the result was returned only as a content item of
+        # type "json", which is not a type the MCP specification defines, so a
+        # spec client would drop it. The "json" item stays exactly as it was
+        # (the Perfox agent was built against it), and the same data is also
+        # sent as `structuredContent`, the spec's field for structured results.
+        # Clients ignore keys they do not know, so neither side is affected by
+        # the other's. The spec requires structuredContent to be an object, so
+        # the list-shaped results (leads, bookings, availability) are wrapped.
         return _rpc_result(body.id, {
             "content": [{"type": "json", "json": result}],
+            "structuredContent": result if isinstance(result, dict) else {"items": result},
             "isError": False,
         })
 

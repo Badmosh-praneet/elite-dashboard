@@ -77,8 +77,11 @@ export default function PeriodManager({ isOpen, periods = [], onClose, onChanged
         }}>
           <div>
             <h2 style={{ fontSize: 16 }}>Reporting months</h2>
+            {/* FIX (2026-10-08): said uploads always replace the month and are
+                "never added alongside", which stopped being true when the
+                upload dialog gained "Add to the month". */}
             <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3 }}>
-              Uploading a workbook replaces the month it belongs to &mdash; it is never added alongside
+              An upload either replaces what earlier uploads put in its month or adds to it &mdash; the upload dialog asks which
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ padding: '6px 8px' }}>

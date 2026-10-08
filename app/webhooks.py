@@ -31,16 +31,19 @@ Two details that are not obvious and are load-bearing:
     three. Deliveries are de-duplicated on identity within a short window.
 """
 
+import hashlib
 import os
 import re
 import secrets
+import time
 from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from .db import is_db_ready, session
-from etl.dimensions import period_for
+from etl import pii
+from etl.dimensions import period_for, source_id_by_name
 
 router = APIRouter(prefix="/api/webhooks", tags=["inbound-webhooks"])
 
@@ -157,6 +160,30 @@ def _parse_when(raw: Optional[str]) -> Optional[datetime]:
         except ValueError:
             continue
     return None
+
+
+# PII POLICY (2026-10-08): retry detection without storing the phone number.
+# A digest of the raw delivery, held in memory for the retry window only - it is
+# never written to the database or a log, and it is gone on restart.
+_RECENT: dict[str, tuple[int, float]] = {}
+_RETRY_SECONDS = 600            # matches _RETRY_WINDOW
+
+
+def _delivery_key(*parts) -> str:
+    raw = "\x1f".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _recent_delivery(key: str) -> Optional[int]:
+    now = time.time()
+    for k in [k for k, (_, t) in _RECENT.items() if now - t > _RETRY_SECONDS]:
+        _RECENT.pop(k, None)
+    hit = _RECENT.get(key)
+    return hit[0] if hit else None
+
+
+def _remember_delivery(key: str, lead_id: int) -> None:
+    _RECENT[key] = (lead_id, time.time())
 
 
 def _check_secret(request: Request, x_webhook_secret: Optional[str],
@@ -287,28 +314,57 @@ async def receive_enquiry(
                     f"Keys received: {sorted(flat)[:25]}"),
         )
 
+    # PII POLICY (2026-10-08): the phone and email are read above only to
+    # recognise the enquiry - from here on they exist only as [REDACTED], and a
+    # phone or email the customer typed into the subject or message is cut out
+    # of it (etl/pii.py). Nothing after this point sees the real values.
+    #
+    # The retry guard used to compare the stored mobile number. With no number
+    # stored that comparison would treat every phone-only enquiry in a ten
+    # minute window as one, so it now works in two layers instead:
+    #   1. a fingerprint of the raw delivery, kept in this process's memory for
+    #      the retry window and never written anywhere - an exact retry of the
+    #      same delivery is caught here;
+    #   2. after a restart, the stored name + (already scrubbed) message.
+    delivery = _delivery_key(name, phone, email, subject, message)
+    phone, email = pii.redact(phone), pii.redact(email)
+    # Some forms put the number or the email in the name field too.
+    name = pii.scrub_text(name)
+    subject, message, model = (pii.scrub_text(subject), pii.scrub_text(message),
+                               pii.scrub_text(model))
+
     note = " | ".join(p for p in (subject, message) if p) or None
     on = when or datetime.now()
+
+    seen = _recent_delivery(delivery)
+    if seen is not None:
+        return {
+            "status": "success", "duplicate": True, "lead_id": seen,
+            "message": "Already received; treated as a retry of the same enquiry.",
+        }
 
     try:
         with session() as cx:
             with cx.transaction():
                 # Retry guard. Compared on loaded_at (when this arrived), not
                 # created_at (when the enquiry happened), because a backdated
-                # enquiry replayed twice is still one enquiry.
+                # enquiry replayed twice is still one enquiry. Needs a name:
+                # with no name and no stored phone there is nothing that tells
+                # two enquiries apart, so those rely on the memory layer alone.
                 dupe = cx.execute(
                     f"""
                     SELECT lead_id FROM lead
                      WHERE origin = 'MANUAL'
-                       AND coalesce(lead_name, '') = coalesce(%s, '')
-                       AND coalesce(mobile, '') = coalesce(%s, '')
+                       AND lead_name = %s
+                       AND coalesce(enquiry_note, '') = coalesce(%s, '')
                        AND loaded_at > now() - interval '{_RETRY_WINDOW}'
                      ORDER BY lead_id DESC LIMIT 1
                     """,
-                    (name, phone),
-                ).fetchone()
+                    (name, note),
+                ).fetchone() if name else None
                 if dupe is not None:
                     existing = dupe["lead_id"] if isinstance(dupe, dict) else dupe[0]
+                    _remember_delivery(delivery, existing)
                     return {
                         "status": "success", "duplicate": True, "lead_id": existing,
                         "message": "Already received; treated as a retry of the "
@@ -316,6 +372,13 @@ async def receive_enquiry(
                     }
 
                 period_id, period_label, is_current = _target_period(cx, on.date())
+
+                # FIX (2026-10-08): was a hard-coded source_id of 1, which means
+                # whichever channel the first workbook load happened to create
+                # first - not "chat". A chat enquiry is a DIGITAL lead, which is
+                # also what db/triggers.sql files agent leads under; looked up
+                # by name because surrogate ids differ between databases.
+                digital = source_id_by_name(cx, "DIGITAL")
 
                 row = cx.execute(
                     """
@@ -328,11 +391,12 @@ async def receive_enquiry(
                             'MANUAL', %s)
                     RETURNING lead_id
                     """,
-                    (name, phone, email, 1, model, note, on, period_id,
+                    (name, phone, email, digital, model, note, on, period_id,
                      is_current, "chat-agent"),
                 ).fetchone()
                 new_id = row["lead_id"] if isinstance(row, dict) else row[0]
 
+        _remember_delivery(delivery, new_id)
         out = {
             "status": "success",
             "duplicate": False,
@@ -340,6 +404,8 @@ async def receive_enquiry(
             "period": period_label,
             "in_active_period": is_current,
             "visible_on_dashboard": is_current,
+            # What was STORED, so the agent's delivery log shows the redaction
+            # rather than echoing the customer's number back out.
             "received": {"name": name, "phone": phone, "email": email,
                          "subject": subject, "message": message},
         }

@@ -17,12 +17,16 @@ import datetime
 import decimal
 import json
 import os
+import sys
 from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from etl import pii  # noqa: E402  (needs ROOT on the path)
+
 TEMPLATE = ROOT / "tools" / "snapshot_template.html"
 OUTPUT = ROOT / "app" / "static" / "snapshot.html"
 DSN = os.environ.get(
@@ -83,6 +87,13 @@ def main() -> None:
     template = TEMPLATE.read_text(encoding="utf-8")
     # Escaping "<" keeps any value in the data from closing the script element.
     blob = json.dumps(data, separators=(",", ":"), default=jsonable).replace("<", "\\u003c")
+    # PII POLICY (2026-10-08): this page is made to be e-mailed and published,
+    # so it must never carry a customer's phone or email - the back-order list
+    # it bakes in used to include a mobile number. The database is redacted at
+    # source (etl/pii.py, db/pii.sql), but a snapshot built from a database
+    # that predates that would still carry them, so the finished data is
+    # scrubbed here as well.
+    blob = pii.scrub_text(blob)
     if "/*__DATA__*/" not in template:
         raise SystemExit(f"{TEMPLATE.name} has no /*__DATA__*/ placeholder")
 

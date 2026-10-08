@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from etl import dimensions as dims
 from etl import normalize as nz
+from etl import pii
 
 
 # =====================================================================
@@ -38,6 +39,13 @@ class _Payload(BaseModel):
 class LeadIn(_Payload):
     lead_name: str = Field(..., min_length=2, max_length=120)
     source: str = Field(..., description="Walk In, Tele In, Digital, Reference, CRM...")
+
+    # PII POLICY (2026-10-08): a phone or email typed into the name field is
+    # cut out of it; the name itself is kept.
+    @field_validator("lead_name")
+    @classmethod
+    def _name(cls, v):
+        return pii.scrub_text(v)
     mobile: str | None = None
     email: str | None = Field(None, max_length=160)
     model_of_interest: str | None = Field(None, max_length=160)
@@ -47,20 +55,27 @@ class LeadIn(_Payload):
     qualified: bool = Field(True, description="Counts toward qualified enquiries")
     created_on: date | None = Field(None, description="Defaults to today")
 
-    @field_validator("mobile")
+    # PII POLICY (2026-10-08): customer phone numbers and emails are never
+    # stored (etl/pii.py). They are replaced here, at the edge of the request,
+    # so nothing after this point ever holds the real value. This used to
+    # validate the number as a 10-digit mobile; a number that is about to be
+    # discarded is not worth refusing a form over, so it no longer does.
+    @field_validator("mobile", "email")
     @classmethod
     def _mobile(cls, v):
-        if v is None or v == "":
-            return None
-        cleaned = nz.mobile(v)
-        if cleaned is None:
-            raise ValueError("expected a 10-digit Indian mobile number")
-        return cleaned
+        return pii.redact(v)
 
 
 class BookingIn(_Payload):
     customer_name: str = Field(..., min_length=2, max_length=120)
     consultant: str = Field(..., min_length=2)
+
+    # PII POLICY (2026-10-08): a phone or email typed into the name field is
+    # cut out of it; the name itself is kept.
+    @field_validator("customer_name")
+    @classmethod
+    def _name(cls, v):
+        return pii.scrub_text(v)
     source: str = Field(..., description="Walkin, Tele, Digital, Reference, CRM")
     model: str = Field(..., description="Taigun, Virtus, Tayron, Golf GTI...")
     variant: str | None = Field(None, description="GT Line AT, 1.5 DSG Sport...")
@@ -74,10 +89,16 @@ class BookingIn(_Payload):
     crm_entry_done: bool | None = None
     notes: str | None = Field(None, max_length=400)
 
+    # PII POLICY (2026-10-08): phone redacted, phone/email cut out of notes.
     @field_validator("mobile")
     @classmethod
     def _mobile(cls, v):
         return LeadIn._mobile(v)
+
+    @field_validator("notes")
+    @classmethod
+    def _notes(cls, v):
+        return pii.scrub_text(v)
 
     @field_validator("fulfilment_status")
     @classmethod
@@ -104,10 +125,28 @@ class BookingPatch(_Payload):
             return None
         return BookingIn._status(v)
 
+    # PII POLICY (2026-10-08): an edit cannot put a phone number back in.
+    @field_validator("mobile")
+    @classmethod
+    def _mobile(cls, v):
+        return pii.redact(v)
+
+    @field_validator("notes")
+    @classmethod
+    def _notes(cls, v):
+        return pii.scrub_text(v)
+
 
 class TestDriveIn(_Payload):
     lead_name: str = Field(..., min_length=2, max_length=120)
     consultant: str | None = None
+
+    # PII POLICY (2026-10-08): a phone or email typed into the name field is
+    # cut out of it; the name itself is kept.
+    @field_validator("lead_name")
+    @classmethod
+    def _name(cls, v):
+        return pii.scrub_text(v)
     source: str | None = None
     model_of_interest: str | None = Field(None, max_length=160)
     mobile: str | None = None
@@ -116,6 +155,7 @@ class TestDriveIn(_Payload):
     end_km: int | None = Field(None, ge=0)
     test_drive_number: str | None = Field(None, max_length=40)
 
+    # PII POLICY (2026-10-08): phone redacted (etl/pii.py).
     @field_validator("mobile")
     @classmethod
     def _mobile(cls, v):
@@ -150,10 +190,23 @@ class AllotmentIn(_Payload):
     allotted_date: date | None = Field(None, description="Defaults to today")
     remarks: str | None = Field(None, max_length=300)
 
+    # PII POLICY (2026-10-08): phone/email cut out of free-text remarks.
+    @field_validator("remarks")
+    @classmethod
+    def _remarks(cls, v):
+        return pii.scrub_text(v)
+
 
 class RegistrationIn(_Payload):
     customer_name: str = Field(..., min_length=2, max_length=120)
     chassis_number: str | None = None
+
+    # PII POLICY (2026-10-08): a phone or email typed into the name field is
+    # cut out of it; the name itself is kept.
+    @field_validator("customer_name")
+    @classmethod
+    def _name(cls, v):
+        return pii.scrub_text(v)
     consultant: str | None = None
     source: str | None = None
     registration_no: str | None = Field(None, max_length=30)
@@ -443,11 +496,19 @@ def _release_vehicle(cx, vehicle_id: int | None) -> None:
     """, (vehicle_id,))
 
 
-DELETABLE_TABLES = {"lead", "booking", "test_drive", "allotment",
-                    "registration", "vehicle"}
+# FIX (2026-10-08): DELETE /api/entries/{table}/{id} failed with a 500 on every
+# call. delete_row() took (cx, table, pk_column, row_id) but the route passes
+# only (table, row_id), so Python raised "missing 1 required positional
+# argument: 'row_id'". The caller has no business knowing each table's key
+# column anyway, so delete_row() now looks it up here and takes (table, row_id).
+DELETABLE_TABLES = {
+    "lead": "lead_id", "booking": "booking_id", "test_drive": "test_drive_id",
+    "allotment": "allotment_id", "registration": "registration_id",
+    "vehicle": "vehicle_id",
+}
 
 
-def delete_row(cx, table: str, pk_column: str, row_id: int) -> bool:
+def delete_row(cx, table: str, row_id: int) -> bool:
     """
     Remove a hand-entered row, and undo what it did.
 
@@ -461,6 +522,7 @@ def delete_row(cx, table: str, pk_column: str, row_id: int) -> bool:
     """
     if table not in DELETABLE_TABLES:
         raise ValueError(f"{table} is not deletable")
+    pk_column = DELETABLE_TABLES[table]
 
     row = cx.execute(
         f"SELECT origin, {'vehicle_id' if table in {'allotment', 'registration'} else 'NULL AS vehicle_id'} "

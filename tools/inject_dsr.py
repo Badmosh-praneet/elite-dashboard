@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -66,12 +67,26 @@ def main():
     print(f" Agent:  {args.agent}")
     print(f"==================================================")
 
+    # FIX (2026-10-08): this posted to /api/upload-dsr, the synchronous route,
+    # which always failed with 500 ("name 'mode' is not defined"), so every run
+    # quietly fell through to the direct database load below. With that route
+    # fixed, a workbook takes ~100 s there and this waited only 90 s - after
+    # which it would ALSO have run the direct load, replacing the same month
+    # twice at once. It now uses the background job the dashboard uses
+    # (/api/upload-report/start, then poll the status), which answers at once.
+    #
+    # It falls back to the direct load only when the job could not be started
+    # because the server is unreachable or too old to have that route. Once a
+    # job is running it never falls back: the server is loading the month, and
+    # losing contact does not mean the load stopped.
     if not args.direct:
-        upload_endpoint = f"{args.url.rstrip('/')}/api/upload-dsr"
-        print(f"Connecting to dashboard API: {upload_endpoint}...")
+        base = args.url.rstrip("/")
+        start_endpoint = f"{base}/api/upload-report/start"
+        print(f"Connecting to dashboard API: {start_endpoint}...")
+        started = None
         try:
             with open(file_path, "rb") as f:
-                data = {"uploaded_by": args.agent}
+                data = {"uploaded_by": args.agent, "mode": "replace"}
                 if args.period:
                     data["period"] = args.period
                 files = {
@@ -81,26 +96,51 @@ def main():
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 }
-                res = requests.post(upload_endpoint, data=data, files=files, timeout=90)
-
-            if res.status_code == 200:
-                body = res.json()
-                print("\nInjection Successful!")
-                print(f"Status:      {body.get('status')}")
-                print(f"Message:     {body.get('message')}")
-                print(f"Period:      {body.get('period')} ({body.get('period_range')})")
-                print(f"Environment: {body.get('environment')}")
-                print("\nRecords Ingested:")
-                counts = body.get("counts", {})
-                for k, v in counts.items():
-                    print(f"  - {k:<25}: {v:>6}")
-                return
-            else:
+                res = requests.post(start_endpoint, data=data, files=files,
+                                    timeout=120)
+            if res.status_code == 202:
+                started = res.json()
+            elif res.status_code == 404 or res.status_code >= 500:
                 print(f"API returned status {res.status_code}: {res.text}")
                 print("Falling back to direct database injection...")
+            else:
+                # The server looked at the file and refused it (a bad period,
+                # say). The direct load would refuse the same file for the same
+                # reason, or bypass a check that was refused on purpose.
+                print(f"API refused the file ({res.status_code}): {res.text}")
+                sys.exit(1)
         except requests.exceptions.RequestException as req_err:
             print(f"Could not connect to {args.url}: {req_err}")
             print("Falling back to direct database injection...")
+
+        if started:
+            job_id = started["job_id"]
+            print(f"Ingest started for {started.get('period')} (job {job_id}). Waiting...")
+            deadline = time.time() + 15 * 60
+            while time.time() < deadline:
+                time.sleep(3)
+                try:
+                    job = requests.get(f"{base}/api/upload-report/status/{job_id}",
+                                       timeout=30).json()
+                except (requests.exceptions.RequestException, ValueError):
+                    continue
+                print(f"  {job.get('step') or job.get('state')}...")
+                if job.get("state") == "done":
+                    body = job.get("result") or {}
+                    print("\nInjection Successful!")
+                    print(f"Status:      {body.get('status')}")
+                    print(f"Message:     {body.get('message')}")
+                    print(f"Period:      {body.get('period')} ({body.get('period_range')})")
+                    print(f"Environment: {body.get('environment')}")
+                    print("\nRecords Ingested:")
+                    for k, v in (body.get("counts") or {}).items():
+                        print(f"  - {k:<25}: {v:>6}")
+                    return
+                if job.get("state") == "failed":
+                    print(f"\nIngest failed on the server: {job.get('error')}")
+                    sys.exit(1)
+            print("\nStill running after 15 minutes. Check the dashboard before retrying.")
+            sys.exit(1)
 
     # Direct database injection fallback
     print("\nRunning direct database ETL ingestion...")
@@ -119,15 +159,19 @@ def main():
             wb = openpyxl.load_workbook(f, data_only=True)
 
         with psycopg.connect(dsn, autocommit=True) as cx:
-            loader = Loader(cx, wb, period_label, start_d, end_d)
-            counts = loader.run()
-            cx.execute(
-                """
-                INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
-                VALUES (%s, now(), now(), %s, %s)
-            """,
-                (file_path.name, json.dumps(counts), f"Direct CLI by {args.agent}"),
-            )
+            # FIX (2026-10-08): one transaction around the load, as the API's
+            # upload routes now use, so a replace that fails part-way does not
+            # leave the month's rows deleted with nothing loaded in their place.
+            with cx.transaction():
+                loader = Loader(cx, wb, period_label, start_d, end_d)
+                counts = loader.run()
+                cx.execute(
+                    """
+                    INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
+                    VALUES (%s, now(), now(), %s, %s)
+                """,
+                    (file_path.name, json.dumps(counts), f"Direct CLI by {args.agent}"),
+                )
 
         print("\nDirect Ingestion Successful!")
         print(f"Period: {period_label} ({start_d} to {end_d})")

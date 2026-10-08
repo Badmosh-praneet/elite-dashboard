@@ -266,6 +266,30 @@ COMMENT ON FUNCTION dsr.lead_insert_from_api() IS
    Supabase. Without it an agent enquiry is stored correctly and displayed
    nowhere.';
 
+-- FIX (2026-10-08): public.lead was never created anywhere in the repo - it
+-- only existed on the live Supabase database, made by hand - so on a database
+-- built from these files the DROP TRIGGER below failed with 'relation
+-- "public.lead" does not exist' and the rest of this file never ran.
+--
+-- Created only when absent, so the live view is left exactly as it is: CREATE
+-- OR REPLACE VIEW would fail there if its column list differed by even one
+-- column. The columns are the ones lead_insert_from_api() reads from NEW, plus
+-- load_period_id; enquiry_note is deliberately not exposed (enquiry_to_lead()
+-- sets it on dsr.lead directly).
+DO $$
+BEGIN
+    IF to_regclass('public.lead') IS NULL THEN
+        CREATE VIEW public.lead AS
+        SELECT lead_id, lead_record_id, created_at, lead_name, mobile, email,
+               source_id, lead_type, model_of_interest, variant_of_interest,
+               colour_of_interest, model_id, lead_owner, consultant_id,
+               lead_status, rating, qualified_stage, test_drive_given, trade_in,
+               trade_in_vehicle, dealership, period_id, origin, loaded_at,
+               updated_at, entered_by, is_current_period, load_period_id
+          FROM dsr.lead;
+    END IF;
+END $$;
+
 DROP TRIGGER IF EXISTS lead_insert_instead ON public.lead;
 CREATE TRIGGER lead_insert_instead
     INSTEAD OF INSERT ON public.lead

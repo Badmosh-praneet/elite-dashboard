@@ -472,7 +472,7 @@ _JSON_DATA = '''{
       "booking_date": "2025-05-05",
       "days_waiting": 493,
       "customer_name": "ARMAAN BAHADUR",
-      "mobile": "9880463415",
+      "mobile": "[REDACTED]",
       "consultant": "Tejas P",
       "model": "GOLF GTI",
       "model_family": "GOLF",

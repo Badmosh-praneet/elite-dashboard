@@ -27,6 +27,18 @@ export default function EntryDrawer({
     return activePeriod.period_end || today;
   };
 
+  // FIX (2026-10-08): the booking and lead forms defaulted `source` to
+  // 'Walk In', which is not one of the dropdown's options - the options are
+  // the canonical names from dim_lead_source (WALKIN, CRM, DIGITAL...). A
+  // <select> whose value matches no option DISPLAYS its first option, so the
+  // form showed "CRM" while saving WALKIN, and a consultant who accepted what
+  // they saw filed the enquiry under the wrong channel. The default is now an
+  // option that actually exists: WALKIN if the list has it, else the first one.
+  const defaultSource = () => {
+    const sources = options.sources || [];
+    return sources.includes('WALKIN') ? 'WALKIN' : (sources[0] || '');
+  };
+
   // Reset form data when tab changes or drawer opens
   useEffect(() => {
     setError(null);
@@ -37,11 +49,11 @@ export default function EntryDrawer({
     if (currentTab === 'booking') {
       initial.booking_date = defaultDate();
       initial.fulfilment_status = 'BOOKED';
-      initial.source = 'Walk In';
+      initial.source = defaultSource();
       initial.model_year = new Date().getFullYear();
     } else if (currentTab === 'lead') {
       initial.created_on = defaultDate();
-      initial.source = 'Walk In';
+      initial.source = defaultSource();
       initial.qualified = true;
     } else if (currentTab === 'testdrive') {
       initial.td_date = defaultDate();
@@ -49,6 +61,14 @@ export default function EntryDrawer({
       initial.allotted_date = defaultDate();
       if (options.open_bookings?.length) initial.booking_id = options.open_bookings[0].booking_id;
       if (options.free_chassis?.length) initial.chassis_number = options.free_chassis[0].chassis_number;
+    } else if (currentTab === 'registration') {
+      // FIX (2026-10-08): retails are now counted per month (db/views.sql,
+      // v_registration_current) by their own date, falling back to the day
+      // they were typed in. This form had no date at all, so a retail entered
+      // while the sheet shows an earlier month landed in today's month and the
+      // figures on screen did not move. It now defaults like every other form:
+      // today, or the shown month's last day when today is outside it.
+      initial.registration_date = defaultDate();
     } else if (currentTab === 'vehicle') {
       initial.stock_status = 'FREESTOCK';
       initial.model_year = new Date().getFullYear();
@@ -83,6 +103,11 @@ export default function EntryDrawer({
 
       // Convert numeric fields
       const payload = { ...formData };
+      // FIX (2026-10-08): the "Not rated" / "Select source..." placeholders
+      // below hold an empty string. Sent as-is, '' would be stored as a value
+      // (a rating of ""), so unset fields are dropped and the server records
+      // them as missing.
+      Object.keys(payload).forEach(k => { if (payload[k] === '') delete payload[k]; });
       ['booking_amount', 'model_year', 'start_km', 'end_km', 'accessories', 'elite_discount'].forEach(k => {
         if (payload[k] !== undefined && payload[k] !== '') {
           payload[k] = Number(payload[k]);
@@ -118,6 +143,13 @@ export default function EntryDrawer({
             <h2 style={{ fontSize: '17px', fontWeight: '800' }}>Direct Cloud Data Entry</h2>
             <p style={{ margin: '2px 0 0', color: 'var(--ink-muted)', fontSize: '12px' }}>
               Saves straight to Supabase cloud PostgreSQL.
+            </p>
+            {/* PII POLICY (2026-10-08): customer phone numbers, emails and
+                addresses are not stored anywhere, so the forms no longer ask
+                for them - a field whose value is thrown away on save only
+                teaches people that it was kept. */}
+            <p style={{ margin: '2px 0 0', color: 'var(--ink-muted)', fontSize: '11.5px' }}>
+              Customer phone numbers, emails and addresses are not stored.
             </p>
           </div>
           <button onClick={onClose} style={{ padding: '6px', borderRadius: '50%' }}>
@@ -224,29 +256,20 @@ export default function EntryDrawer({
                   </label>
                 </div>
 
-                <div className="row-2">
-                  <label className="field">
-                    <span>Colour</span>
-                    <select
-                      value={formData.colour || ''}
-                      onChange={e => handleChange('colour', e.target.value)}
-                    >
-                      <option value="">Select colour...</option>
-                      {(options.colours || []).map(col => (
-                        <option key={col} value={col}>{col}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    <span>Mobile (10 digits)</span>
-                    <input
-                      value={formData.mobile || ''}
-                      onChange={e => handleChange('mobile', e.target.value)}
-                      placeholder="9876543210"
-                    />
-                  </label>
-                </div>
+                {/* PII POLICY (2026-10-08): the Mobile field that sat beside
+                    Colour was removed - phone numbers are not stored. */}
+                <label className="field">
+                  <span>Colour</span>
+                  <select
+                    value={formData.colour || ''}
+                    onChange={e => handleChange('colour', e.target.value)}
+                  >
+                    <option value="">Select colour...</option>
+                    {(options.colours || []).map(col => (
+                      <option key={col} value={col}>{col}</option>
+                    ))}
+                  </select>
+                </label>
 
                 <div className="row-2">
                   <label className="field">
@@ -349,28 +372,22 @@ export default function EntryDrawer({
                   </label>
                 </div>
 
-                <div className="row-2">
-                  <label className="field">
-                    <span>Mobile (10 digits)</span>
-                    <input
-                      value={formData.mobile || ''}
-                      onChange={e => handleChange('mobile', e.target.value)}
-                      placeholder="9845012345"
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Rating</span>
-                    <select
-                      value={formData.rating || ''}
-                      onChange={e => handleChange('rating', e.target.value)}
-                    >
-                      <option value="Hot">Hot</option>
-                      <option value="Warm">Warm</option>
-                      <option value="Cold">Cold</option>
-                    </select>
-                  </label>
-                </div>
+                {/* PII POLICY (2026-10-08): the Mobile field that sat beside
+                    Rating was removed - phone numbers are not stored. */}
+                <label className="field">
+                  <span>Rating</span>
+                  {/* FIX (2026-10-08): had no empty option, so the field
+                      showed "Hot" while sending no rating at all. */}
+                  <select
+                    value={formData.rating || ''}
+                    onChange={e => handleChange('rating', e.target.value)}
+                  >
+                    <option value="">Not rated</option>
+                    <option value="Hot">Hot</option>
+                    <option value="Warm">Warm</option>
+                    <option value="Cold">Cold</option>
+                  </select>
+                </label>
 
                 <label className="field">
                   <span>Model of Interest</span>
@@ -435,10 +452,13 @@ export default function EntryDrawer({
 
                   <label className="field">
                     <span>Source</span>
+                    {/* FIX (2026-10-08): had no empty option, so it showed the
+                        first source while sending none. */}
                     <select
                       value={formData.source || ''}
                       onChange={e => handleChange('source', e.target.value)}
                     >
+                      <option value="">Select source...</option>
                       {(options.sources || []).map(s => (
                         <option key={s} value={s}>{s}</option>
                       ))}
@@ -553,6 +573,16 @@ export default function EntryDrawer({
                   />
                 </label>
 
+                <label className="field">
+                  <span>Registration Date *</span>
+                  <input
+                    type="date"
+                    required
+                    value={formData.registration_date || ''}
+                    onChange={e => handleChange('registration_date', e.target.value)}
+                  />
+                </label>
+
                 <div className="row-2">
                   <label className="field">
                     <span>Registration No</span>
@@ -591,11 +621,16 @@ export default function EntryDrawer({
                 <div className="row-2">
                   <label className="field">
                     <span>Model *</span>
+                    {/* FIX (2026-10-08): had no placeholder, so it showed the
+                        first model while sending none - the save then failed
+                        with "model: Field required" for a model that looked
+                        selected. The placeholder makes `required` enforce it. */}
                     <select
                       required
                       value={formData.model || ''}
                       onChange={e => handleChange('model', e.target.value)}
                     >
+                      <option value="">Select model...</option>
                       {(options.models || []).map(m => (
                         <option key={m} value={m}>{m}</option>
                       ))}

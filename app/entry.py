@@ -11,12 +11,10 @@ and maintains in-memory and client-side reactive state when running in serverles
 
 from __future__ import annotations
 
-import calendar
 import io
 import json
 import logging
 import os
-import re
 import threading
 import time
 import uuid
@@ -31,7 +29,7 @@ from . import fallback
 from .db import (is_db_ready, fetch_all, pool, DSN, ensure_pool_open,
                  connect as db_connect, session)
 from .events import broker
-from etl.dimensions import activate_period
+from etl.dimensions import activate_period, report_period
 from etl.load_dsr import Loader
 from .write import (AllotmentIn, BookingIn, BookingPatch, LeadIn, RegistrationIn,
                     TestDriveIn, VehicleIn, create_allotment, create_booking,
@@ -54,14 +52,6 @@ PERIOD_TARGET_TABLES = [
 _MONTH_ABBR = {1: "JAN", 2: "FEB", 3: "MAR", 4: "APR", 5: "MAY", 6: "JUN",
                7: "JUL", 8: "AUG", 9: "SEP", 10: "OCT", 11: "NOV", 12: "DEC"}
 
-MONTH_MAP = {
-    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
-    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
-    "aug": 8, "august": 8, "sep": 9, "september": 9, "oct": 10, "october": 10,
-    "nov": 11, "november": 11, "dec": 12, "december": 12,
-}
-
-
 def _resolve_period(period: str | None, filename: str) -> tuple[str, date, date]:
     """
     Work out which month a report is for - or refuse to guess.
@@ -71,41 +61,16 @@ def _resolve_period(period: str | None, filename: str) -> tuple[str, date, date]
     that month's bookings, test drives, allotments and registrations. Getting
     this wrong destroys a month of data, so an unanswerable case is now an
     error the uploader can act on rather than a guess nobody sees.
+
+    FIX (2026-10-08): the rule itself moved to etl.dimensions.report_period so
+    the command-line loader - and through it the Drive and email sync daemons,
+    which always loaded into AUG2026 - applies exactly the same one. This is
+    now only the HTTP wrapper around it.
     """
-    month = year = None
-
-    # An explicit label is the most reliable signal, and it is the one form the
-    # scan below cannot read: in "OCT2026" the year is glued to the month, so
-    # there is no word boundary for \b(20\d\d)\b to find.
-    tag = re.match(r"^\s*([a-z]{3,9})\s*[-_ ]?\s*(20\d\d)\s*$", (period or "").lower())
-    if tag and tag.group(1) in MONTH_MAP:
-        month, year = MONTH_MAP[tag.group(1)], int(tag.group(2))
-    else:
-        text = f"{period or ''} {filename}".lower()
-        for name, num in MONTH_MAP.items():
-            if re.search(r"\b" + name, text):
-                month = num
-                break
-        ym = re.search(r"\b(20\d\d)\b", text)
-        year = int(ym.group(1)) if ym else None
-
-    if month is None or year is None:
-        missing = "month" if month is None else "year"
-        raise HTTPException(
-            400,
-            f"Could not tell which {missing} this report covers, and guessing would "
-            f"overwrite whichever month it guessed. Set the period explicitly "
-            f"(for example OCT2026), or name the file with its month and year "
-            f"(for example 'DSR October 2026.xlsx').",
-        )
-
-    abbr = calendar.month_abbr[month].upper()
-    # Always the canonical ABBRYYYY. A label typed "OCT 2026" would otherwise
-    # create a second period alongside "OCT2026", each holding half the month.
-    label = f"{abbr}{year}"
-
-    _, last_day = calendar.monthrange(year, month)
-    return label, date(year, month, 1), date(year, month, last_day)
+    try:
+        return report_period(period, filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 # =====================================================================
@@ -232,12 +197,21 @@ def add_registration(body: RegistrationIn):
     return fallback.store.add_registration(body.model_dump())
 
 
+# FIX (2026-10-08): every call to this route returned 500 - it passed
+# (table, row_id) to delete_row(), which wanted (table, pk_column, row_id). The
+# writer now resolves the key column itself (app/write.py). Two smaller things
+# came with it: the entity is accepted the way the README and the offline store
+# write it ("bookings", "test-drive"), and a row that does not exist is a 404
+# rather than a 200 with `false` in the body.
 @router.delete("/api/entries/{table}/{row_id}", status_code=200, tags=["entry"])
 def delete_entry(table: str, row_id: int):
+    entity = table.lower().replace("-", "_").rstrip("s")
     if is_db_ready():
-        res = _commit(delete_row, table, row_id)
-        broker.notify_sync(table)
-        return res
+        deleted = _commit(delete_row, entity, row_id)
+        if not deleted:
+            raise HTTPException(404, f"No {entity} with id {row_id}.")
+        broker.notify_sync(entity)
+        return {"deleted": True, "table": entity, "id": row_id}
     return fallback.store.delete_entry(table, row_id)
 
 
@@ -386,12 +360,35 @@ def period_contents(label: str):
             (pid,)).fetchone()["n"] + cx.execute(
             "SELECT count(*) AS n FROM booking WHERE origin = 'MANUAL' AND period_id = %s",
             (pid,)).fetchone()["n"]
+
+        # FIX (2026-10-08): the upload dialog used `counts`/`hand_entered` above
+        # to warn what a REPLACE upload would remove - but those describe
+        # deleting or emptying the month, which is a different and larger set.
+        # A replace upload (Loader.reset) removes only the WORKBOOK rows that
+        # this month's own previous upload produced, plus the month's targets,
+        # and keeps hand-entered rows. So the dialog told people their
+        # hand-entered rows would be lost when they would not, and overstated
+        # the row count. This is the set reset() actually deletes.
+        on_upload = {}
+        for table in PERIOD_FACTS:
+            on_upload[table] = cx.execute(
+                f"SELECT count(*) AS n FROM {table} "
+                f"WHERE origin = 'WORKBOOK' AND load_period_id = %s",
+                (pid,)).fetchone()["n"]
+        for table in PERIOD_TARGET_TABLES:
+            on_upload[table] = cx.execute(
+                f"SELECT count(*) AS n FROM {table} WHERE period_id = %s",
+                (pid,)).fetchone()["n"]
+
         return {
             "label": row["label"],
             "is_active": row["is_active"],
             "counts": {k: v for k, v in counts.items() if v},
             "total": sum(counts.values()),
             "hand_entered": manual,
+            "replaced_by_upload": {k: v for k, v in on_upload.items() if v},
+            "replaced_by_upload_total": sum(on_upload.values()),
+            "kept_on_upload": manual,
         }
 
 
@@ -705,6 +702,11 @@ def upload_status(job_id: str):
     return out
 
 
+# FIX (2026-10-08): an Excel file sent here always failed with 500 "name 'mode'
+# is not defined" - the Excel branch passed `mode` to the Loader but the route
+# never declared it. It is now a form field (default "replace", the old
+# intended behaviour), passed through for text files too, and echoed in the
+# reply so the dashboard can say "added to" rather than "replaced".
 @router.post("/api/upload-dsr", tags=["ingestion"])
 @router.post("/api/upload-report", tags=["ingestion"])
 async def upload_dsr_workbook(
@@ -712,12 +714,17 @@ async def upload_dsr_workbook(
     period: str | None = Form(None, description="Optional period label e.g. AUG2026, SEP2026"),
     uploaded_by: str = Form("Reporting Agent", description="Name of agent or manager uploading"),
     table_type: str | None = Form(None, description="Optional target table: auto, booking, lead, vehicle"),
+    mode: str = Form("replace", description="replace the month, or append to it"),
 ):
     """
     Ingest a DSR report file (Excel workbook, CSV, or Text format).
     Rebuilds/updates facts (leads, bookings, vehicles, test drives),
     updates period alignment in Supabase, and notifies connected web clients.
+
+    The dashboard sends Excel workbooks to /api/upload-report/start instead,
+    because a workbook takes longer than a gateway will hold a request open.
     """
+    mode = mode if mode in ("replace", "append") else "replace"
     fname = file.filename or "unknown_report.txt"
     fname_lower = fname.lower()
     allowed_exts = (".xlsx", ".xlsm", ".xls", ".csv", ".txt", ".tsv")
@@ -745,6 +752,7 @@ async def upload_dsr_workbook(
                 period_end=period_end,
                 uploaded_by=uploaded_by,
                 table_type=table_type,
+                mode=mode,
             )
             counts = parse_result.get("counts", {})
             warnings = parse_result.get("warnings", [])
@@ -775,6 +783,9 @@ async def upload_dsr_workbook(
                 "file_type": "text/csv",
                 "detected_format": parse_result.get("detected_format"),
                 "detected_table": parse_result.get("detected_table"),
+                # A single-table CSV is always added to the month, whatever
+                # was asked for - text_parser reports what it actually did.
+                "mode": parse_result.get("mode", mode),
                 "period": period_label,
                 "period_range": f"{period_start} to {period_end}",
                 "uploaded_by": uploaded_by,
@@ -797,16 +808,22 @@ async def upload_dsr_workbook(
     if is_db_ready():
         try:
             with db_connect(autocommit=True) as cx:
-                loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
-                counts = loader.run()
-                cx.execute("""
-                    INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
-                    VALUES (%s, now(), now(), %s, %s)
-                """, (
-                    fname,
-                    json.dumps(counts),
-                    f"Uploaded by {uploaded_by}" + (("; " + "; ".join(loader.warnings)) if loader.warnings else ""),
-                ))
+                # FIX (2026-10-08): one transaction around the whole load, the
+                # same as _ingest_worker. On a bare autocommit connection a
+                # replace that failed part-way had already committed reset()'s
+                # deletes, leaving the month empty.
+                with cx.transaction():
+                    loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
+                    counts = loader.run()
+                    cx.execute("""
+                        INSERT INTO etl_run (source_file, file_modified, finished_at, row_counts, notes)
+                        VALUES (%s, now(), now(), %s, %s)
+                    """, (
+                        fname,
+                        json.dumps(counts),
+                        f"Uploaded by {uploaded_by} ({mode})"
+                        + (("; " + "; ".join(loader.warnings)) if loader.warnings else ""),
+                    ))
 
             try:
                 await broker.notify("workbook_reload", "etl_run", {"counts": counts, "period": period_label})
@@ -818,6 +835,7 @@ async def upload_dsr_workbook(
                 "message": f"Successfully ingested '{fname}' into PostgreSQL database for {period_label}.",
                 "filename": fname,
                 "file_type": "excel",
+                "mode": mode,
                 "period": period_label,
                 "period_range": f"{period_start} to {period_end}",
                 "uploaded_by": uploaded_by,

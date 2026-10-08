@@ -71,26 +71,31 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
   const pending = num(kpi.bookings_missing_crm_entry);
 
   const share = (part, whole) => (whole > 0 ? (part / whole) * 100 : 0);
+  // FIX (2026-10-08): with no target loaded for the month these read
+  // "0.0% of 0 target" (and, before client.js stopped substituting them,
+  // August's targets). They now say there is no target.
+  const ofTarget = (part, whole) =>
+    (whole > 0 ? `${pct(share(part, whole))} of ${n0(whole)} target` : 'No target set');
 
   const tiles = [
     {
       label: 'Retails Delivered',
       value: n0(retails),
       share: share(retails, retailTarget),
-      foot: `${pct(share(retails, retailTarget))} of ${n0(retailTarget)} target`,
+      foot: ofTarget(retails, retailTarget),
     },
     {
       label: 'Total Enquiries',
       value: n0(enquiries),
       share: share(enquiries, leadsTarget),
       spark: trends.enquiries,
-      foot: `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)} · ${n0(kpi.qualified)} qualified`,
+      foot: `${leadsTarget > 0 ? `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)}` : 'No target'} · ${n0(kpi.qualified)} qualified`,
     },
     {
       label: 'Test Drives',
       value: n0(testDrives),
       share: share(testDrives, tdTarget),
-      foot: `${pct(share(testDrives, tdTarget))} of ${n0(tdTarget)} target`,
+      foot: ofTarget(testDrives, tdTarget),
     },
     {
       label: 'Booking Revenue',

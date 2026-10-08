@@ -2,11 +2,12 @@ import os
 import secrets
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 
 from .db import is_db_ready, fetch_all, session
-from etl.dimensions import period_for
+from etl import pii
+from etl.dimensions import period_for, source_id_by_name
 
 
 def require_agent_key(
@@ -48,7 +49,10 @@ router = APIRouter(prefix="/api/crm", tags=["agent-integration"],
 class NewLeadPayload(BaseModel):
     lead_name: str
     phone_number: Optional[str] = None
-    source_id: Optional[int] = 1
+    # FIX (2026-10-08): defaulted to 1, i.e. whichever channel the first
+    # workbook load created first. Omitted now means DIGITAL, looked up by name
+    # in create_lead() below - the same channel db/triggers.sql gives agent leads.
+    source_id: Optional[int] = None
     consultant_id: Optional[int] = None
     model_id: Optional[int] = None
     variant_of_interest: Optional[str] = None
@@ -62,13 +66,29 @@ class NewLeadPayload(BaseModel):
     model_of_interest: Optional[str] = None
     rating: Optional[str] = None
 
+    # PII POLICY (2026-10-08): the agent may still send the customer's phone
+    # and email - it is not an error to - but neither is stored. Replaced here,
+    # before the route ever sees them (etl/pii.py).
+    @field_validator("phone_number", "email")
+    @classmethod
+    def _no_pii(cls, v):
+        return pii.redact(v)
+
+    # A phone or email inside the name field is cut out; the name is kept.
+    @field_validator("lead_name")
+    @classmethod
+    def _name(cls, v):
+        return pii.scrub_text(v)
+
 class FetchLeadsPayload(BaseModel):
     limit: Optional[int] = 50
     status: Optional[str] = 'New'
     # Which reporting month to read. 'active' is the one the dashboard is
     # showing; a label like 'AUG2026' reads that month; 'all' drops the filter.
     period: Optional[str] = 'active'
-    # Name or mobile, for answering "what do we have for <customer>".
+    # Name, for answering "what do we have for <customer>". (PII POLICY
+    # 2026-10-08: this also matched the mobile number; phone numbers are no
+    # longer stored, so it matches the name only.)
     search: Optional[str] = None
 
 
@@ -153,9 +173,9 @@ def fetch_leads_for_agent(payload: FetchLeadsPayload):
         params += extra
 
         if payload.search:
-            sql += " AND (l.lead_name ILIKE %s OR l.mobile ILIKE %s)"
-            term = f"%{payload.search.strip()}%"
-            params += [term, term]
+            # PII POLICY (2026-10-08): name only - mobile holds [REDACTED].
+            sql += " AND l.lead_name ILIKE %s"
+            params.append(f"%{payload.search.strip()}%")
 
         sql += " ORDER BY l.created_at DESC NULLS LAST LIMIT %s"
         params.append(payload.limit)
@@ -201,9 +221,9 @@ def fetch_bookings_for_agent(payload: FetchBookingsPayload):
             params.append(payload.status)
 
         if payload.search:
-            sql += " AND (b.customer_name ILIKE %s OR b.mobile ILIKE %s)"
-            term = f"%{payload.search.strip()}%"
-            params += [term, term]
+            # PII POLICY (2026-10-08): name only - mobile holds [REDACTED].
+            sql += " AND b.customer_name ILIKE %s"
+            params.append(f"%{payload.search.strip()}%")
 
         sql += " ORDER BY b.booking_date DESC NULLS LAST LIMIT %s"
         params.append(payload.limit)
@@ -264,10 +284,13 @@ def create_lead(lead: NewLeadPayload):
                     lead.lead_name,
                     # The payload has always called this phone_number while the
                     # column is `mobile`; the value used to be accepted and then
-                    # silently dropped.
+                    # silently dropped. (Already [REDACTED] by the payload
+                    # validator above - PII policy 2026-10-08.)
                     lead.phone_number,
                     lead.email,
-                    lead.source_id, lead.consultant_id, lead.model_id,
+                    lead.source_id if lead.source_id is not None
+                    else source_id_by_name(cx, "DIGITAL"),
+                    lead.consultant_id, lead.model_id,
                     lead.lead_type, lead.model_of_interest,
                     lead.variant_of_interest, lead.rating,
                     on, period_id, is_current, lead.origin,

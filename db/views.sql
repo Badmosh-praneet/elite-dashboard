@@ -25,6 +25,30 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------
+-- Reporting-month helpers
+-- ---------------------------------------------------------------------
+
+-- FIX (2026-10-08): retails were counted from EVERY registration ever loaded,
+-- not from the month on screen. registration has no period_id, so v_sales_funnel,
+-- v_attachment_rates, v_model_position and the consultant scorecard all read
+-- the whole table - and loading a second month doubled August's retails
+-- (reproduced: 18 -> 36). This view is the one place that decides which
+-- registrations belong to the active month:
+--   * a workbook row belongs to the month whose upload produced it
+--     (load_period_id - the Reg Report is a per-month tab);
+--   * a hand-entered row has no load, so it goes by its own date, falling back
+--     to the day it was entered.
+-- Every view below that counts retails reads this instead of `registration`.
+CREATE OR REPLACE VIEW v_registration_current AS
+SELECT r.*
+FROM registration r
+JOIN dim_period p ON p.is_active
+WHERE r.load_period_id = p.period_id
+   OR (r.load_period_id IS NULL
+       AND COALESCE(r.registration_date, r.delivery_date, r.invoice_date,
+                    r.loaded_at::date) BETWEEN p.period_start AND p.period_end);
+
+-- ---------------------------------------------------------------------
 -- Inventory
 -- ---------------------------------------------------------------------
 
@@ -129,8 +153,10 @@ orders AS (
     GROUP BY m.family
 ),
 retails AS (
+    -- FIX (2026-10-08): was `FROM registration`, which counted every month's
+    -- retails; see v_registration_current.
     SELECT m.family, count(*) AS registered
-    FROM registration r
+    FROM v_registration_current r
     JOIN vehicle v   ON v.vehicle_id = r.vehicle_id
     JOIN dim_model m ON m.model_id   = v.model_id
     WHERE r.status = 'REGISTERED'
@@ -310,11 +336,16 @@ WITH rolled AS (
     GROUP BY sc.period_id, sc.consultant_id, sc.row_label, sc.row_kind
 ),
 -- Live achievement per consultant, straight off the facts.
+--
+-- FIX (2026-10-08): retails and hand-entered test drives were counted across
+-- every month, so each consultant's month figures grew with every month
+-- loaded. Retails now come from v_registration_current, and test drives are
+-- held to the active month's dates - the same rule v_sales_funnel uses.
 per_consultant AS (
     SELECT c.consultant_id,
            (SELECT count(*) FROM booking b
              WHERE b.consultant_id = c.consultant_id AND b.is_current_period)   AS bookings,
-           (SELECT count(*) FROM registration rg
+           (SELECT count(*) FROM v_registration_current rg
              WHERE rg.consultant_id = c.consultant_id
                AND rg.status = 'REGISTERED')                                     AS retails,
            (SELECT count(*) FROM lead l
@@ -325,8 +356,11 @@ per_consultant AS (
                AND l.is_current_period AND l.origin = 'MANUAL'
                AND l.qualified_stage = 'Qualified')                              AS qualified_added,
            (SELECT count(*) FROM test_drive td
-             WHERE td.consultant_id = c.consultant_id AND td.origin = 'MANUAL')  AS tds_added
+             WHERE td.consultant_id = c.consultant_id AND td.origin = 'MANUAL'
+               AND (td.td_date IS NULL
+                    OR td.td_date BETWEEN ap.period_start AND ap.period_end))  AS tds_added
     FROM dim_consultant c
+    JOIN dim_period ap ON ap.is_active
 ),
 -- The same, aggregated for the roll-up rows. A TEAM_TOTAL row names its manager
 -- in the label ("Field Team (Tele & Digital) - Nethra"), which is the only link
@@ -438,6 +472,12 @@ WHERE p.is_active;
 -- still holds a November 2024 export (see v_data_quality), so the scorecard's
 -- TD ACH column is the only current figure. It is used as the baseline, plus any
 -- test drive entered since - MANUAL rows only, so the stale tab is not counted.
+--
+-- FIX (2026-10-08): the test-drive baseline summed the GRAND_TOTAL scorecard
+-- row of EVERY month, and retails counted every registration ever loaded, so
+-- loading a second month doubled both for the month on screen (reproduced:
+-- 128 -> 256 test drives, 18 -> 36 retails). The baseline is now this month's
+-- scorecard only, and retails come from v_registration_current.
 CREATE OR REPLACE VIEW v_sales_funnel AS
 SELECT p.label AS period,
        (SELECT count(*) FROM lead
@@ -445,14 +485,14 @@ SELECT p.label AS period,
        (SELECT count(*) FROM lead
          WHERE is_current_period AND qualified_stage = 'Qualified')      AS qualified,
        (SELECT COALESCE(sum(td_achieved), 0) FROM target_consultant_scorecard
-         WHERE row_kind = 'GRAND_TOTAL')
+         WHERE row_kind = 'GRAND_TOTAL' AND period_id = p.period_id)
        + (SELECT count(*) FROM test_drive
            WHERE origin = 'MANUAL'
              AND (td_date IS NULL
                   OR td_date BETWEEN p.period_start AND p.period_end))   AS test_drives,
        (SELECT count(*) FROM booking
          WHERE is_current_period)                                        AS bookings,
-       (SELECT count(*) FROM registration
+       (SELECT count(*) FROM v_registration_current
          WHERE status = 'REGISTERED')                                    AS retails
 FROM dim_period p
 -- Exactly one row: the month the dashboard is reporting on.
@@ -477,11 +517,20 @@ SELECT f.period,
        (SELECT count(*) FROM booking
          WHERE is_current_period AND crm_entry_done IS FALSE)          AS bookings_missing_crm_entry,
        (SELECT sum(booking_amount) FROM booking WHERE is_current_period) AS booking_amount_collected,
-       (SELECT round(avg(tat_days), 1) FROM allotment)                 AS avg_allotment_tat_days
+       -- FIX (2026-10-08): averaged every month's allotments; now the active
+       -- month's - its upload's rows, or hand-entered ones dated inside it.
+       (SELECT round(avg(a.tat_days), 1)
+          FROM allotment a JOIN dim_period ap ON ap.is_active
+         WHERE a.load_period_id = ap.period_id
+            OR (a.load_period_id IS NULL
+                AND a.allotted_date BETWEEN ap.period_start AND ap.period_end)) AS avg_allotment_tat_days
 FROM v_sales_funnel f;
 
 -- Attachment mix on retailed cars: finance, insurance, extended warranty, SVP.
 -- These carry most of the dealership's margin, so they are scored separately.
+--
+-- FIX (2026-10-08): was `FROM registration`, so the rates and the "N retails"
+-- denominator covered every month loaded; now the active month only.
 CREATE OR REPLACE VIEW v_attachment_rates AS
 SELECT count(*)                                                        AS registrations,
        count(*) FILTER (WHERE finance_type IS NOT NULL
@@ -495,7 +544,7 @@ SELECT count(*)                                                        AS regist
              / NULLIF(count(*), 0), 1)                                  AS finance_pct,
        round(100.0 * count(*) FILTER (WHERE has_insurance)
              / NULLIF(count(*), 0), 1)                                  AS insurance_pct
-FROM registration
+FROM v_registration_current
 WHERE status = 'REGISTERED';
 
 -- How long a completed deal takes to clear the back office.
@@ -608,6 +657,11 @@ FROM v_daily_kpi k;
 -- every disagreement found during the load is surfaced here.
 -- ---------------------------------------------------------------------
 
+-- FIX (2026-10-08): four of these checks counted rows from every month loaded,
+-- so their "affected rows" grew with each upload and the Comparision figures
+-- printed a cross-month retail total. Registrations now come from
+-- v_registration_current, and the Daily Tracker and allotment checks are held
+-- to the active month.
 CREATE OR REPLACE VIEW v_data_quality AS
 WITH checks AS (
     SELECT 'Test drive tab is stale'::text AS issue,
@@ -623,15 +677,17 @@ WITH checks AS (
            || 'underlying tabs hold '
            || (SELECT count(*) FROM lead WHERE is_current_period)::text || ' / '
            || (SELECT count(*) FROM booking WHERE is_current_period)::text || ' / '
-           || (SELECT count(*) FROM registration WHERE status = 'REGISTERED')::text || '.',
+           || (SELECT count(*) FROM v_registration_current WHERE status = 'REGISTERED')::text || '.',
            '3', 'medium'
     UNION ALL
     SELECT 'Daily Tracker holds two conflicting target blocks',
            'The upper block sets a different enquiry target for the same consultant '
            || 'than the lower block. Views read BLOCK_2 (full roster).',
            (SELECT count(DISTINCT consultant_label)::text FROM target_daily_tracker
-             WHERE consultant_label IN (
+             WHERE period_id = (SELECT period_id FROM dim_period WHERE is_active)
+               AND consultant_label IN (
                  SELECT consultant_label FROM target_daily_tracker
+                  WHERE period_id = (SELECT period_id FROM dim_period WHERE is_active)
                  GROUP BY consultant_label HAVING count(DISTINCT block_label) > 1)),
            'medium'
     UNION ALL
@@ -652,7 +708,11 @@ WITH checks AS (
     SELECT 'Allotments with no chassis on the source tab',
            'The Alloted tab has no chassis column; rows were matched to stock on '
            || 'model text and ageing. Unmatched rows have no vehicle link.',
-           (SELECT count(*)::text FROM allotment WHERE vehicle_id IS NULL),
+           (SELECT count(*)::text FROM allotment a JOIN dim_period ap ON ap.is_active
+             WHERE a.vehicle_id IS NULL
+               AND (a.load_period_id = ap.period_id
+                    OR (a.load_period_id IS NULL
+                        AND a.allotted_date BETWEEN ap.period_start AND ap.period_end))),
            'low'
     UNION ALL
     SELECT 'Registration report stops at accounts',
@@ -660,7 +720,7 @@ WITH checks AS (
            || 'invoice date, registration date, registration number, VOIW id and '
            || 'delivery date - are blank on every row, so the fulfilment stage has '
            || 'to be read from the status column instead.',
-           (SELECT count(*)::text FROM registration
+           (SELECT count(*)::text FROM v_registration_current
              WHERE registration_date IS NULL AND invoice_date IS NULL),
            'medium'
     UNION ALL

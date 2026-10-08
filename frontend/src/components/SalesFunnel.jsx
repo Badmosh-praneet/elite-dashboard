@@ -3,12 +3,15 @@ import { Filter, ArrowRight } from 'lucide-react';
 import { n0, pct } from '../api/client';
 
 export default function SalesFunnel({ funnel = {} }) {
+  // FIX (2026-10-08): when the API returned no funnel (no active month), this
+  // drew August 2026's figures and targets - 367 / 450, 42 / 84 - as if they
+  // were live. An empty funnel is now drawn as empty stages with no targets.
   const stages = funnel.stages || [
-    { stage: 'Enquiries', value: 367, target: 450 },
-    { stage: 'Qualified', value: 361, target: null },
-    { stage: 'Test drives', value: 128, target: 300 },
-    { stage: 'Bookings', value: 42, target: 84 },
-    { stage: 'Retails', value: 18, target: 66 },
+    { stage: 'Enquiries', value: 0, target: null },
+    { stage: 'Qualified', value: 0, target: null },
+    { stage: 'Test drives', value: 0, target: null },
+    { stage: 'Bookings', value: 0, target: null },
+    { stage: 'Retails', value: 0, target: null },
   ];
 
   const maxVal = Math.max(1, ...stages.map(s => Math.max(s.value || 0, s.target || 0)));

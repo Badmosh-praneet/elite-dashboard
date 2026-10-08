@@ -35,6 +35,17 @@ CREATE TYPE car_origin AS ENUM ('FRESH_CAR', 'PUNCHED_CAR');
 -- file; MANUAL rows were entered through the dashboard and must survive it.
 CREATE TYPE row_origin AS ENUM ('WORKBOOK', 'MANUAL');
 
+-- FIX (2026-10-08): this file had drifted from the live database. The loader
+-- (reset / stamp_load) and the month delete/clear routes all read and write a
+-- `load_period_id` column on the five fact tables, and db/triggers.sql attaches
+-- a trigger to a `public.lead` view - neither was created anywhere in the repo,
+-- so building a database from these files (README quick start, or
+-- tools/setup_cloud_db.py) failed at triggers.sql and again at the first load.
+-- load_period_id is now declared on lead, test_drive, booking, allotment and
+-- registration below; public.lead is created in db/triggers.sql. A database
+-- that already has them (the live one) is unaffected - this file is only run
+-- to build a new schema.
+
 -- The channel a consultant works. The DSR splits every consultant's scorecard
 -- into their primary channel plus a catch-all second row.
 CREATE TYPE channel_group AS ENUM (
@@ -192,7 +203,10 @@ CREATE TABLE lead (
     loaded_at                 timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now(),
     entered_by                text,
-    is_current_period   boolean NOT NULL DEFAULT false
+    is_current_period   boolean NOT NULL DEFAULT false,
+    -- FIX (2026-10-08): was missing from this file (see the note at the top).
+    -- The month whose upload produced this row, independent of period_id.
+    load_period_id      smallint REFERENCES dim_period(period_id)
 );
 COMMENT ON TABLE lead IS
   'Two populations live here. is_current_period = true is the August 2026 enquiry
@@ -230,6 +244,8 @@ CREATE TABLE test_drive (
     loaded_at                 timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now(),
     entered_by                text,
+    -- FIX (2026-10-08): was missing from this file (see the note at the top).
+    load_period_id            smallint REFERENCES dim_period(period_id),
     CHECK (end_km IS NULL OR start_km IS NULL OR end_km >= start_km)
 );
 
@@ -269,6 +285,8 @@ CREATE TABLE booking (
     loaded_at                 timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now(),
     entered_by                text,
+    -- FIX (2026-10-08): was missing from this file (see the note at the top).
+    load_period_id            smallint REFERENCES dim_period(period_id),
     CHECK (booking_amount IS NULL OR booking_amount >= 0)
 );
 COMMENT ON TABLE booking IS
@@ -306,6 +324,8 @@ CREATE TABLE allotment (
     loaded_at                 timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now(),
     entered_by                text,
+    -- FIX (2026-10-08): was missing from this file (see the note at the top).
+    load_period_id            smallint REFERENCES dim_period(period_id),
     remarks           text
 );
 COMMENT ON COLUMN allotment.tat_days IS
@@ -359,6 +379,10 @@ CREATE TABLE registration (
     loaded_at                 timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now(),
     entered_by                text,
+    -- FIX (2026-10-08): was missing from this file (see the note at the top).
+    -- Registrations carry no business month of their own, so this is also
+    -- what the views use to decide which month a workbook retail belongs to.
+    load_period_id            smallint REFERENCES dim_period(period_id),
     elite_discount              numeric(12,2)
 );
 COMMENT ON TABLE registration IS
@@ -514,3 +538,11 @@ END $$;
 CREATE INDEX ON booking (origin);
 CREATE INDEX ON lead (origin);
 CREATE INDEX ON vehicle (origin);
+
+-- FIX (2026-10-08): reset() and the month delete/clear routes filter on
+-- load_period_id on every upload; index it alongside the column it was missing.
+CREATE INDEX ON lead (load_period_id);
+CREATE INDEX ON booking (load_period_id);
+CREATE INDEX ON test_drive (load_period_id);
+CREATE INDEX ON allotment (load_period_id);
+CREATE INDEX ON registration (load_period_id);

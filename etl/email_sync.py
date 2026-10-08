@@ -20,6 +20,12 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 def process_file(file_path):
     print(f"Triggering ETL for {file_path.name}")
+    # FIX (2026-10-08): this call passes no --period, and load_dsr used to
+    # default that to AUG2026 - so every emailed workbook replaced August,
+    # whatever month it was for. load_dsr now reads the month from the
+    # attachment's file name and refuses one that does not say (logged in the
+    # error branch below; the email is already marked read, so resend it with
+    # the month in the file name).
     result = subprocess.run([
         "python", "-u", "-m", "etl.load_dsr", 
         "--file", str(file_path)
@@ -84,8 +90,15 @@ def check_for_emails():
                             
                             with open(file_path, 'wb') as f:
                                 f.write(part.get_payload(decode=True))
-                                
-                            success = process_file(file_path)
+
+                            try:
+                                success = process_file(file_path)
+                            finally:
+                                # PII POLICY (2026-10-08): the attachment is the
+                                # raw DSR, with every customer's phone, email and
+                                # address. It used to stay in tmp/ forever; it is
+                                # deleted once loaded (or failed).
+                                file_path.unlink(missing_ok=True)
                             if success:
                                 processed_any = True
 

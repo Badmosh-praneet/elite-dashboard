@@ -47,6 +47,12 @@ def download_file(service, file_id, file_name):
 
 def process_file(file_path):
     print(f"Triggering ETL for {file_path.name}")
+    # FIX (2026-10-08): this call passes no --period, and load_dsr used to
+    # default that to AUG2026 - so every workbook dropped in the Drive folder
+    # replaced August, whatever month it was for. load_dsr now reads the month
+    # from the file name ("DSR September 2026.xlsx" -> SEP2026) and refuses a
+    # name that does not say, which lands in the error branch below and is
+    # retried on the next poll until the file is renamed.
     # Run the ETL load_dsr module as a subprocess so it stays isolated and correctly loads dotenv
     result = subprocess.run([
         "python", "-u", "-m", "etl.load_dsr", 
@@ -88,16 +94,25 @@ def check_for_updates():
             # Check if this file is new or modified
             if file_id not in state or state[file_id] != modified_time:
                 print(f"New or modified file detected: {file_name} ({modified_time})")
+                file_path = None
                 try:
                     file_path = download_file(service, file_id, file_name)
                     success = process_file(file_path)
-                    
+
                     if success:
                         state[file_id] = modified_time
                         save_state(state)
-                        
+
                 except Exception as e:
                     print(f"Failed to process {file_name}: {e}")
+                finally:
+                    # PII POLICY (2026-10-08): the downloaded workbook is the
+                    # raw DSR - every customer's phone, email and address,
+                    # unredacted. It used to be left in tmp/ forever. It is
+                    # deleted once loaded (or failed); the next poll downloads
+                    # it again if it needs retrying.
+                    if file_path is not None:
+                        Path(file_path).unlink(missing_ok=True)
                     
     except Exception as e:
         print(f"Error checking Google Drive: {e}")

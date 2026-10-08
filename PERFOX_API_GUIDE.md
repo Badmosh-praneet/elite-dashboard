@@ -4,6 +4,27 @@ This document contains the API endpoints required for the Perfox inbound/outboun
 
 ---
 
+## Customer PII is not stored (policy, 2026-10-08)
+
+A customer's **phone number, email address and postal address are never
+stored**. Every endpoint below still *accepts* them — sending one is not an
+error — but the value is replaced with `[REDACTED]` before it reaches the
+database, and a phone or email typed inside a message is cut out of the text
+(`[PHONE REDACTED]`). The same rule is enforced by database triggers, so it
+also applies to anything the agent writes to Supabase directly.
+
+What this means for the agent:
+
+- **Leads come back without a phone number.** `mobile` reads `[REDACTED]`. An
+  outbound agent cannot call leads back from this data — the number has to
+  come from somewhere that is allowed to hold it.
+- **Orders are found by the customer's name**, not by phone.
+  `get_order_status` takes a name only.
+- **Customer names are kept** — they were not part of the instruction, and an
+  order cannot be looked up without one.
+
+---
+
 ## 0. Before anything else: can Perfox actually reach this API?
 
 Perfox runs in the cloud. It cannot reach `localhost`, `127.0.0.1`, or a private
@@ -33,8 +54,7 @@ Use the `https://….ngrok-free.app` address ngrok prints as the Base URL below.
 > `DELETE /api/periods/{label}` wipes a reporting month, and
 > `POST /api/upload-report` replaces one. Always set `AGENT_API_KEY` (below)
 > before exposing the app, keep the tunnel URL private, and shut the tunnel down
-> when you are not testing. The API key protects `/api/crm/*` only — the rest of
-> the API has no authentication at all.
+> when you are not testing. The API key protects `/api/crm/*` only.
 
 ### Authentication
 
@@ -70,7 +90,7 @@ This endpoint allows the Perfox agent to pull a fresh batch of uncontacted leads
   "status": "New",      // Optional: default "New". Matched NULL-safely, so a
                         // lead nobody has touched counts as New.
   "period": "active",   // Optional: "active" (default) | "AUG2026" | "all"
-  "search": null        // Optional: matches lead name or mobile
+  "search": null        // Optional: matches the lead's name
 }
 ```
 
@@ -89,7 +109,7 @@ An array of lead objects:
   {
     "lead_id": 52196,
     "lead_name": "Nikilesh S",
-    "mobile": "98xxxxxxxx",
+    "mobile": "[REDACTED]",
     "source_id": 1,
     "source": "WALKIN",
     "consultant_id": 87,
@@ -126,8 +146,10 @@ If the Perfox agent needs to ingest entirely *new* leads (e.g. from an inbound c
 ```json
 {
   "lead_name": "John Doe",
-  "phone_number": "555-0199",
-  "source_id": 1,                   // Optional (defaults to 1)
+  "phone_number": "555-0199",       // Accepted, stored as [REDACTED]
+  "source_id": null,                // Optional. Omitted = the DIGITAL source.
+                                    // (FIX 2026-10-08: used to default to id 1,
+                                    // which is not a fixed channel.)
   "consultant_id": null,            // Optional
   "model_id": null,                 // Optional
   "variant_of_interest": "Taigun",  // Optional
@@ -135,7 +157,7 @@ If the Perfox agent needs to ingest entirely *new* leads (e.g. from an inbound c
   "created_at": null,               // Optional: when the enquiry came in.
                                     // Omit for "now". Decides which reporting
                                     // month the lead is filed under.
-  "email": null,                    // Optional
+  "email": null,                    // Optional; stored as [REDACTED]
   "lead_type": null,                // Optional: Retail / Corporate B2B / B2C
   "model_of_interest": null,        // Optional: free text
   "rating": null                    // Optional: Hot / Warm / Cold
@@ -245,7 +267,7 @@ blank rows.
   "period": "AUG2026",
   "in_active_period": true,
   "visible_on_dashboard": true,
-  "received": {"name": "Asha Menon", "phone": "9876543210", ...}
+  "received": {"name": "Asha Menon", "phone": "[REDACTED]", ...}
 }
 ```
 
@@ -256,7 +278,7 @@ see *Which month do live enquiries land in?* below.
 ### Delivered twice is still one lead
 
 Webhook providers retry when they do not get a prompt `2xx`. An identical
-delivery (same name and mobile) within 10 minutes returns the **original**
+delivery (the same payload, or the same name and message) within 10 minutes returns the **original**
 `lead_id` with `"duplicate": true` instead of inserting a second row, so a retry
 storm cannot triple the enquiry count.
 
@@ -317,7 +339,7 @@ the agent and the screen cannot disagree.
 {
   "limit": 50,
   "period": "active",      // "active" (default) | a label like "AUG2026" | "all"
-  "search": "praneet",     // Optional: matches customer name or mobile
+  "search": "praneet",     // Optional: matches the customer's name
   "status": null           // Optional: BOOKED / NO_STOCK / ALLOTED / RETAILED / CANCELLED
 }
 ```
@@ -337,7 +359,7 @@ curl -X POST https://<your-public-url>/api/crm/fetch-bookings \
     "booking_id": 4003,
     "booking_date": "2026-08-31",
     "customer_name": "praneet gogoi",
-    "mobile": "8822441744",
+    "mobile": "[REDACTED]",
     "consultant": "Lokesh Reddy K",
     "model": "GOLF GTI",
     "variant": "GT",

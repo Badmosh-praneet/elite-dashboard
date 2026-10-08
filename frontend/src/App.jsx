@@ -312,6 +312,12 @@ export default function App() {
           orderbook={data?.orderbook || []}
           sources={data?.sources || []}
           backorders={data?.backorders || []}
+          // FIX (2026-10-08): the order book edits in place again (status and
+          // CRM tick); this reports the save and pulls the new figures.
+          onChanged={(msg, opts) => {
+            addToast(msg, opts);
+            loadData(true);
+          }}
         />
       )}
 

@@ -51,6 +51,12 @@ def main():
                 triggers_sql = (ROOT / "db" / "triggers.sql").read_text(encoding="utf-8")
                 cur.execute(triggers_sql)
 
+                # PII POLICY (2026-10-08): the redaction triggers go on before
+                # the first load, so a new database never holds a customer's
+                # phone, email or address even for a moment.
+                print("    Applying db/pii.sql (customer PII redaction triggers)...")
+                cur.execute((ROOT / "db" / "pii.sql").read_text(encoding="utf-8"))
+
         os.environ["DATABASE_URL"] = dsn
 
         print("3/4 Running ETL to load DSR August 2026 workbook into PostgreSQL...")
@@ -69,16 +75,31 @@ def main():
                 cur.execute(views_sql)
 
                 # Grant permissions to Supabase roles if present
+                #
+                # FIX (2026-10-08): this granted ALL on every dsr table to
+                # `anon` and `authenticated` as well as service_role. On
+                # Supabase, `anon` is the role behind the public anon key -
+                # the one that ships inside website bundles (see the note on
+                # public.enquiries in db/triggers.sql) - so anyone holding it
+                # could read and rewrite the whole DSR database through
+                # PostgREST. The app and the agents connect with the database
+                # URL or the service key, which is service_role, so that is
+                # the only role granted now.
+                #
+                # This only affects databases built with this script from now
+                # on. An existing database keeps whatever it was granted; to
+                # take it back there:
+                #   REVOKE ALL ON ALL TABLES IN SCHEMA dsr FROM anon, authenticated;
                 try:
                     cur.execute("""
                         DO $$
                         BEGIN
-                            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-                                GRANT USAGE ON SCHEMA dsr TO anon, authenticated, service_role;
-                                GRANT ALL ON ALL TABLES IN SCHEMA dsr TO anon, authenticated, service_role;
-                                GRANT ALL ON ALL SEQUENCES IN SCHEMA dsr TO anon, authenticated, service_role;
-                                GRANT ALL ON ALL ROUTINES IN SCHEMA dsr TO anon, authenticated, service_role;
-                                ALTER DEFAULT PRIVILEGES IN SCHEMA dsr GRANT ALL ON TABLES TO anon, authenticated, service_role;
+                            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+                                GRANT USAGE ON SCHEMA dsr TO service_role;
+                                GRANT ALL ON ALL TABLES IN SCHEMA dsr TO service_role;
+                                GRANT ALL ON ALL SEQUENCES IN SCHEMA dsr TO service_role;
+                                GRANT ALL ON ALL ROUTINES IN SCHEMA dsr TO service_role;
+                                ALTER DEFAULT PRIVILEGES IN SCHEMA dsr GRANT ALL ON TABLES TO service_role;
                             END IF;
                         END
                         $$;

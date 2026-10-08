@@ -142,6 +142,31 @@ SELECT
                (SELECT count(*) FROM lead    l WHERE l.period_id = p.period_id) AS leads,
                (SELECT count(*) FROM booking b WHERE b.period_id = p.period_id) AS bookings
         FROM dim_period p ORDER BY p.period_start DESC) x)                          AS periods,
+  -- FIX (2026-10-08): the bundle had no recent-activity feed, and the browser
+  -- filled `activity` with [] whenever the bundle was used - which is always -
+  -- so "Recently Recorded" under the stock panel was permanently empty. The
+  -- query is /api/recent-activity's (app/entry.py), limited the same 15 rows
+  -- the per-endpoint path asked for.
+  (SELECT json_agg(x) FROM (
+        SELECT * FROM (
+            SELECT 'booking' AS kind, booking_id AS id, customer_name AS who,
+                   loaded_at, entered_by FROM booking WHERE origin = 'MANUAL'
+            UNION ALL
+            SELECT 'lead', lead_id, lead_name, loaded_at, entered_by
+              FROM lead WHERE origin = 'MANUAL'
+            UNION ALL
+            SELECT 'test drive', test_drive_id, lead_name, loaded_at, entered_by
+              FROM test_drive WHERE origin = 'MANUAL'
+            UNION ALL
+            SELECT 'allotment', allotment_id, customer_name, loaded_at, entered_by
+              FROM allotment WHERE origin = 'MANUAL'
+            UNION ALL
+            SELECT 'registration', registration_id, customer_name, loaded_at, entered_by
+              FROM registration WHERE origin = 'MANUAL'
+            UNION ALL
+            SELECT 'vehicle', vehicle_id, chassis_number, loaded_at, entered_by
+              FROM vehicle WHERE origin = 'MANUAL'
+        ) a ORDER BY loaded_at DESC LIMIT 15) x)                                    AS activity,
   (SELECT json_build_object(
         'enquiries', (SELECT json_agg(t) FROM (
             SELECT d::date::text AS d,
@@ -1024,31 +1049,34 @@ def agent_availability(
     return res
 
 
+# PII POLICY (2026-10-08): customer phone numbers are no longer stored, so an
+# order can only be found by name. A lookup by mobile used to compare against
+# the stored number; it would now match nothing and the agent would tell a
+# customer they have no order. A request with only a mobile is refused with a
+# message the agent can act on ("ask for the name on the booking"). The
+# parameter is still accepted, and ignored, so an agent that sends both keeps
+# working.
 @app.get("/agent/order-status", tags=["agent: client"])
 def agent_order_status(
     name: str | None = Query(None, description="Customer name, full or partial"),
-    mobile: str | None = Query(None, description="10-digit mobile number"),
+    mobile: str | None = Query(None, description="Ignored - phone numbers are not stored"),
 ):
-    if not name and not mobile:
-        raise HTTPException(400, "pass either name or mobile")
+    if not name:
+        raise HTTPException(
+            400, "Search by the customer's name. Phone numbers are not stored "
+                 "(customer PII is redacted), so an order cannot be found by phone.")
     if is_db_ready():
         try:
             return fetch_all(*filtered(
                 "SELECT * FROM agent_order_status",
-                [("customer_name ILIKE '%%' || %s || '%%'", name),
-                 ("mobile = %s", mobile)],
+                [("customer_name ILIKE '%%' || %s || '%%'", name)],
                 "ORDER BY booking_date DESC NULLS LAST",
             ))
         except Exception:
             pass
     backorders = fallback.get_backorders()
-    res = []
-    for b in backorders:
-        if name and name.lower() in (b.get("customer_name") or "").lower():
-            res.append(b)
-        elif mobile and mobile in (b.get("mobile") or ""):
-            res.append(b)
-    return res
+    return [b for b in backorders
+            if name.lower() in (b.get("customer_name") or "").lower()]
 
 
 @app.get("/agent/model-catalogue", tags=["agent: client"])

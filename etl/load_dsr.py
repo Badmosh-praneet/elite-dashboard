@@ -25,6 +25,14 @@ import psycopg
 
 from . import dimensions as dims
 from . import normalize as nz
+# PII POLICY (2026-10-08): customer phone, email and address are never stored
+# (etl/pii.py). Phone/email/address COLUMNS go through pii.redact(); every
+# customer NAME and free-text cell goes through pii.scrub_text(), because the
+# CRM export sometimes writes the phone or email into the name field itself
+# ("Naresh naresh@...", "Asif 98..."). Names are scrubbed the same way wherever
+# they are read, so the joins on customer name (booking <-> allotment, the
+# booking de-duplication) still line up.
+from . import pii
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -393,9 +401,12 @@ class Loader:
             key_col = 5 if sheet == "Leads" else 2
             for _, cell in self.rows(sheet, 1, key_col):
                 created = nz.as_datetime(cell(2))
+                # PII POLICY (2026-10-08): Mobile (col 7) and Email (col 8) are
+                # never stored - see etl/pii.py. The TD Leads tab alone carries
+                # ~1,800 of each.
                 rows.append((
-                    nz.clean(cell(1)), created, nz.clean(cell(5)), nz.mobile(cell(7)),
-                    nz.clean(cell(8)), self.source_id(cell(9)), nz.clean(cell(6)),
+                    nz.clean(cell(1)), created, pii.scrub_text(nz.clean(cell(5))), pii.redact(cell(7)),
+                    pii.redact(cell(8)), self.source_id(cell(9)), nz.clean(cell(6)),
                     nz.clean(cell(10)), nz.clean(cell(11)), nz.clean(cell(14)),
                     self.model_id(nz.model_from_text(cell(10))),
                     nz.clean(cell(15)), self.consultant_id(cell(15)),
@@ -419,9 +430,11 @@ class Loader:
         print("loading test drives...")
         rows = []
         for _, cell in self.rows("TD", 1, 8):
+            # PII POLICY (2026-10-08): Mobile No (col 4) and Email (col 5) are
+            # never stored - see etl/pii.py.
             rows.append((
-                nz.upper(cell(8)), nz.clean(cell(16)), nz.clean(cell(1)),
-                nz.mobile(cell(4)), nz.clean(cell(5)), self.source_id(cell(3)),
+                nz.upper(cell(8)), nz.clean(cell(16)), pii.scrub_text(nz.clean(cell(1))),
+                pii.redact(cell(4)), pii.redact(cell(5)), self.source_id(cell(3)),
                 nz.clean(cell(6)), nz.clean(cell(7)),
                 self.model_id(nz.model_from_text(cell(7))), nz.upper(cell(9)),
                 nz.as_int(cell(10)), nz.as_int(cell(11)), nz.as_int(cell(12)),
@@ -457,12 +470,15 @@ class Loader:
         rows_main = []
         for sheet, header, current, note_cols in booking_tabs:
             for _, cell in self.rows(sheet, header, 6):
-                notes = " | ".join(
-                    n for n in (nz.clean(cell(c)) for c in note_cols) if n) or None
+                # PII POLICY (2026-10-08): MOBILENO (col 7) is never stored, and
+                # a phone or email typed into the remarks columns is cut out of
+                # them - see etl/pii.py.
+                notes = pii.scrub_text(" | ".join(
+                    n for n in (nz.clean(cell(c)) for c in note_cols) if n) or None)
                 model_label, variant_label = cell(8), cell(9)
                 rows_main.append((
                     nz.as_date(cell(2)), nz.clean(cell(3)), self.source_id(cell(4)),
-                    self.consultant_id(cell(5)), nz.clean(cell(6)), nz.mobile(cell(7)),
+                    self.consultant_id(cell(5)), pii.scrub_text(nz.clean(cell(6))), pii.redact(cell(7)),
                     self.model_id(model_label),
                     self.variant_id(model_label, variant_label, long_text=cell(11)),
                     self.colour_id(cell(12)), nz.as_int(cell(10)), nz.clean(cell(11)),
@@ -489,7 +505,7 @@ class Loader:
             rows_alloted.append((
                 nz.as_date(cell(14)) or nz.as_date(cell(3)), nz.clean(cell(2)),
                 self.consultant_id(cell(12), team=cell(13)), self.team_id(cell(13)),
-                nz.clean(cell(11)), self.model_id(model_label),
+                pii.scrub_text(nz.clean(cell(11))), self.model_id(model_label),
                 self.variant_id(model_label, variant_label),
                 self.colour_id(cell(7)), nz.as_int(cell(4)),
                 nz.fulfilment_status(cell(10)), nz.as_int(cell(16)),
@@ -517,6 +533,16 @@ class Loader:
         # August. reset() has already cleared this period's previous rows, so
         # "load_period_id IS NULL" is exactly this load's output; stamp_load()
         # claims them at the end of run().
+        #
+        # FIX (2026-10-08): this used to delete HAND-ENTERED bookings. Rows typed
+        # on the dashboard (origin = MANUAL) are never stamped with
+        # load_period_id - stamp_load() only claims WORKBOOK rows - so they
+        # always passed the "load_period_id IS NULL" test. A manual booking
+        # whose customer name matched a workbook row was merged into it and
+        # deleted, and two manual bookings for the same customer (one person,
+        # two cars) collapsed into one, on every upload. Reproduced: a reload
+        # deleted 2 of 3 manual bookings. Both statements are now confined to
+        # WORKBOOK rows, which is what "this load's output" was meant to be.
         self.cx.execute("""
             UPDATE booking b1 
             SET 
@@ -541,12 +567,14 @@ class Loader:
             FROM booking b2
             WHERE upper(b1.customer_name) = upper(b2.customer_name)
               AND b1.booking_id > b2.booking_id
-              AND b1.load_period_id IS NULL AND b2.load_period_id IS NULL;
+              AND b1.load_period_id IS NULL AND b2.load_period_id IS NULL
+              AND b1.origin = 'WORKBOOK' AND b2.origin = 'WORKBOOK';
 
             DELETE FROM booking a USING booking b
             WHERE upper(a.customer_name) = upper(b.customer_name)
               AND a.booking_id < b.booking_id
               AND a.load_period_id IS NULL AND b.load_period_id IS NULL
+              AND a.origin = 'WORKBOOK' AND b.origin = 'WORKBOOK'
         """)
         
         self.counts["booking"] = self.one("SELECT count(*) FROM booking")
@@ -572,18 +600,19 @@ class Loader:
         }
 
         for _, cell in self.rows("Alloted", 1, 5):
-            customer = nz.upper(cell(5))
+            customer = nz.upper(pii.scrub_text(nz.clean(cell(5))))
             commission = nz.clean(cell(1))
             vid = vehicle_by_commission.get(commission) if commission else None
             matched += 1 if vid else 0
             bid = booking_by_customer.get(customer) if customer else None
             
             rows.append((
-                vid, bid, nz.clean(cell(5)),
+                vid, bid, pii.scrub_text(nz.clean(cell(5))),
                 self.consultant_id(cell(6)), nz.clean(cell(2)),
                 nz.colour_key(cell(3)), nz.as_int(cell(4)), nz.as_date(cell(7)),
                 nz.as_int(cell(8)), nz.upper(cell(9)), nz.upper(cell(10)),
-                nz.clean(cell(11))
+                # PII POLICY (2026-10-08): free-text remarks, phone/email cut out.
+                pii.scrub_text(nz.clean(cell(11)))
             ))
             
         if rows:
@@ -606,12 +635,14 @@ class Loader:
         rows = []
         for _, cell in self.rows("Reg Report", 2, 3):
             chassis = nz.upper(cell(3))
+            # PII POLICY (2026-10-08): Contact No (col 24), ADDRESS (col 46) and
+            # EMAIL ID (col 47) are never stored - see etl/pii.py.
             rows.append((
-                self.vehicle_by_chassis.get(chassis), chassis, nz.clean(cell(18)),
+                self.vehicle_by_chassis.get(chassis), chassis, pii.scrub_text(nz.clean(cell(18))),
                 self.consultant_id(cell(19)), self.source_id(cell(20)),
                 nz.upper(cell(17)), nz.as_date(cell(21)), nz.as_date(cell(22)),
-                nz.as_date(cell(23)), nz.mobile(cell(24)), nz.clean(cell(46)),
-                nz.clean(cell(47)), nz.clean(cell(25)), nz.as_date(cell(26)),
+                nz.as_date(cell(23)), pii.redact(cell(24)), pii.redact(cell(46)),
+                pii.redact(cell(47)), pii.scrub_text(nz.clean(cell(25))), nz.as_date(cell(26)),
                 nz.as_date(cell(27)), nz.as_time(cell(28)), nz.as_date(cell(29)),
                 nz.as_date(cell(30)), nz.as_date(cell(31)), nz.upper(cell(32)),
                 nz.clean(cell(33)), nz.as_date(cell(34)), nz.upper(cell(35)),
@@ -829,7 +860,14 @@ class Loader:
         "lead":        ["lead_name", "mobile", "created_at", "model_of_interest"],
         "booking":     ["customer_name", "mobile", "booking_date", "model_id", "variant_id"],
         "test_drive":  ["lead_name", "mobile", "td_date", "model_of_interest"],
-        "allotment":   ["vehicle_id", "booking_id"],
+        # FIX (2026-10-08): was ["vehicle_id", "booking_id"]. booking_id is a
+        # surrogate key, and an append inserts the month's bookings again with
+        # NEW ids before they are de-duplicated - so an allotment re-read from
+        # the same file pointed at a different booking_id and never matched
+        # its first copy. Appending the August workbook twice left 31
+        # allotments for 20 (found while testing the fixes above). These are
+        # the columns the Alloted tab itself carries.
+        "allotment":   ["vehicle_id", "customer_name", "allotted_date", "long_model_text"],
         "registration": ["customer_name", "chassis_number"],
     }
 
@@ -1002,14 +1040,30 @@ def main():
     ap = argparse.ArgumentParser(description="Load a DSR workbook into Postgres.")
     ap.add_argument("--file", default=str(DEFAULT_FILE))
     ap.add_argument("--dsn", default=DEFAULT_DSN)
-    ap.add_argument("--period", default="AUG2026")
-    ap.add_argument("--start", default="2026-08-01")
-    ap.add_argument("--end", default="2026-08-31")
+    # FIX (2026-10-08): --period used to default to AUG2026 (and --start/--end
+    # to August's dates), so anything that ran this without --period - the
+    # Drive and email sync daemons do - replaced August with whatever file had
+    # just arrived. With no --period the month is now read from the file name
+    # ("DSR September 2026.xlsx" -> SEP2026), and a name that does not say
+    # which month it is refuses to load rather than guessing.
+    ap.add_argument("--period", default=None,
+                    help="e.g. SEP2026; read from the file name when omitted")
+    ap.add_argument("--start", default=None, help="defaults to the month's first day")
+    ap.add_argument("--end", default=None, help="defaults to the month's last day")
     args = ap.parse_args()
 
     path = Path(args.file)
     if not path.exists():
         raise SystemExit(f"workbook not found: {path}")
+
+    try:
+        label, first, last = dims.report_period(args.period, path.name)
+    except ValueError as exc:
+        raise SystemExit(f"refusing to load {path.name}: {exc}")
+    args.period = label
+    args.start = args.start or first.isoformat()
+    args.end = args.end or last.isoformat()
+    print(f"period    {label} ({args.start} to {args.end})")
 
     print(f"reading   {path.name}")
     # NOT read_only=True. It opens this workbook in 0.8s instead of 22s, but
@@ -1022,9 +1076,18 @@ def main():
     wb = openpyxl.load_workbook(path, data_only=True)
     print("finished reading workbook")
 
-    print(f"connecting to {args.dsn}...")
-    with psycopg.connect(args.dsn, connect_timeout=10,
-                         prepare_threshold=None) as cx:
+    # FIX (2026-10-08): connected without a search_path, but Loader.__init__
+    # reads dim_team, dim_consultant... unqualified before run() sets one - so on
+    # any database that does not set search_path to dsr itself (a fresh one
+    # built from db/schema.sql, for instance) this died with 'relation
+    # "dim_team" does not exist'. That broke the README quick start,
+    # tools/setup_cloud_db.py and both sync daemons, which all run this. Same
+    # option app/db.py gives every pooled connection. (The line below also
+    # printed the whole DSN, password included, into the daemons' logs; it now
+    # prints only the host part.)
+    print(f"connecting to {args.dsn.split('@')[-1]}...")
+    with psycopg.connect(args.dsn, connect_timeout=10, prepare_threshold=None,
+                         options="-c search_path=dsr,public") as cx:
         print("connected to db!")
         loader = Loader(
             cx, wb, args.period,

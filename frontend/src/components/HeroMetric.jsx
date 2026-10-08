@@ -18,8 +18,13 @@ import { n0, pct, money } from '../api/client';
 
 export default function HeroMetric({ kpi = {} }) {
   const bookings = Number(kpi.bookings || 0);
-  const target = Number(kpi.booking_target || kpi.target || 84);
-  const ratio = target > 0 ? (bookings / target) * 100 : 0;
+  // FIX (2026-10-08): fell back to 84 - August 2026's booking target - for a
+  // month with no target loaded, so a new month read "3 / 84, 3.6% achieved"
+  // against a goal nobody set for it. No target now means no target: the
+  // figure stands alone and the stats say so.
+  const target = Number(kpi.booking_target || kpi.target || 0);
+  const hasTarget = target > 0;
+  const ratio = hasTarget ? (bookings / target) * 100 : 0;
   const shortfall = Math.max(0, target - bookings);
   const collected = kpi.booking_amount_collected;
 
@@ -30,12 +35,14 @@ export default function HeroMetric({ kpi = {} }) {
               : 'var(--serious)';
 
   const stats = [
-    { label: 'Achieved', value: pct(ratio), tone: 'var(--ink)' },
-    {
-      label: shortfall > 0 ? 'To goal' : 'Status',
-      value: shortfall > 0 ? n0(shortfall) : 'Reached',
-      tone: shortfall > 0 ? 'var(--serious)' : 'var(--good-text)',
-    },
+    { label: 'Achieved', value: hasTarget ? pct(ratio) : '–', tone: 'var(--ink)' },
+    !hasTarget
+      ? { label: 'Target', value: 'Not set', tone: 'var(--ink-muted)' }
+      : {
+          label: shortfall > 0 ? 'To goal' : 'Status',
+          value: shortfall > 0 ? n0(shortfall) : 'Reached',
+          tone: shortfall > 0 ? 'var(--serious)' : 'var(--good-text)',
+        },
     ...(collected != null
       ? [{ label: 'Advance collected', value: money(collected), tone: 'var(--ink)' }]
       : []),
@@ -52,7 +59,7 @@ export default function HeroMetric({ kpi = {} }) {
             aligned to a sentence instead of to the numeral they qualify. */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
           <span className="hero-figure">{n0(bookings)}</span>
-          <span className="hero-of">/ {n0(target)}</span>
+          {hasTarget && <span className="hero-of">/ {n0(target)}</span>}
         </div>
 
         <div className="hero-stats">
@@ -67,20 +74,25 @@ export default function HeroMetric({ kpi = {} }) {
 
       {/* A rule, not a pill. The tick marks where the month actually stands, so
           the eye lands on the position rather than on the shape of the bar. */}
-      <div className="hero-meter">
-        <div
-          className="hero-meter-fill"
-          style={{ width: `${Math.min(100, Math.max(1.5, ratio))}%`, background: meter }}
-        />
-        <div
-          className="hero-meter-tick"
-          style={{ left: `${Math.min(100, Math.max(1.5, ratio))}%` }}
-        />
-      </div>
-      <div className="hero-scale">
-        <span>0</span>
-        <span>Target {n0(target)}</span>
-      </div>
+      {/* No meter without a target - there is nothing to measure against. */}
+      {hasTarget && (
+        <>
+          <div className="hero-meter">
+            <div
+              className="hero-meter-fill"
+              style={{ width: `${Math.min(100, Math.max(1.5, ratio))}%`, background: meter }}
+            />
+            <div
+              className="hero-meter-tick"
+              style={{ left: `${Math.min(100, Math.max(1.5, ratio))}%` }}
+            />
+          </div>
+          <div className="hero-scale">
+            <span>0</span>
+            <span>Target {n0(target)}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

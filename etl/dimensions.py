@@ -12,6 +12,8 @@ They are safe to call repeatedly - each one is an upsert.
 
 from __future__ import annotations
 
+import calendar
+import re
 from datetime import date, timedelta
 
 from . import normalize as nz
@@ -131,6 +133,73 @@ def resolve_source(cx, label) -> int | None:
 
 _MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+_MONTH_WORDS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "september": 9, "oct": 10, "october": 10,
+    "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+
+
+# FIX (2026-10-08): the Drive and email sync daemons always overwrote AUG2026.
+# They run `python -m etl.load_dsr --file X` with no --period, and the CLI
+# defaulted --period to AUG2026, so every synced workbook - whatever month it
+# was for - replaced August. The month-detection rule lived only in the upload
+# API (app/entry.py), so the CLI could not use it. It now lives here, the CLI
+# and the API both call it, and it refuses to guess instead of defaulting.
+def report_period(period: str | None, filename: str) -> tuple[str, date, date]:
+    """
+    Which month a report is for, from an explicit label or the file name.
+
+    Returns (label, first_day, last_day). Raises ValueError when it cannot tell,
+    because guessing a month means replacing whichever month it guessed.
+    """
+    month = year = None
+
+    # An explicit label is the most reliable signal, and it is the one form the
+    # scan below cannot read: in "OCT2026" the year is glued to the month, so
+    # there is no word boundary for \b(20\d\d)\b to find.
+    tag = re.match(r"^\s*([a-z]{3,9})\s*[-_ ]?\s*(20\d\d)\s*$", (period or "").lower())
+    if tag and tag.group(1) in _MONTH_WORDS:
+        month, year = _MONTH_WORDS[tag.group(1)], int(tag.group(2))
+    else:
+        text = f"{period or ''} {filename}".lower()
+        for name, num in _MONTH_WORDS.items():
+            if re.search(r"\b" + name, text):
+                month = num
+                break
+        ym = re.search(r"\b(20\d\d)\b", text)
+        year = int(ym.group(1)) if ym else None
+
+    if month is None or year is None:
+        missing = "month" if month is None else "year"
+        raise ValueError(
+            f"Could not tell which {missing} this report covers, and guessing would "
+            f"overwrite whichever month it guessed. Set the period explicitly "
+            f"(for example OCT2026), or name the file with its month and year "
+            f"(for example 'DSR October 2026.xlsx').")
+
+    # Always the canonical ABBRYYYY. A label typed "OCT 2026" would otherwise
+    # create a second period alongside "OCT2026", each holding half the month.
+    label = f"{_MONTHS[month - 1]}{year}"
+    _, last_day = calendar.monthrange(year, month)
+    return label, date(year, month, 1), date(year, month, last_day)
+
+
+def source_id_by_name(cx, name: str = "DIGITAL") -> int | None:
+    """
+    The id of a lead source, looked up by its canonical name.
+
+    FIX (2026-10-08): the webhook and /api/crm/leads filed every lead under
+    source_id = 1. Surrogate ids are handed out in the order a workbook first
+    mentions each source, so id 1 is whichever channel the first load happened
+    to meet first - not a fixed meaning, and different on a rebuilt database.
+    db/triggers.sql already looks DIGITAL up by name for agent-filed leads; this
+    is the same rule for the Python routes. resolve_source() creates the row if
+    a fresh database has never seen it.
+    """
+    return resolve_source(cx, name)
 
 
 def period_for(cx, on_date: date | None) -> tuple[int, str, bool]:

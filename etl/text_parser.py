@@ -23,6 +23,7 @@ import psycopg
 from app.db import DSN, connect as db_connect
 from etl import dimensions as dims
 from etl import normalize as nz
+from etl import pii
 from etl.load_dsr import Loader
 
 
@@ -173,9 +174,15 @@ def ingest_text_report(
     period_end: date,
     uploaded_by: str = "Reporting Agent",
     table_type: str | None = None,
+    mode: str = "replace",
 ) -> dict[str, Any]:
     """
     Main entry point for ingesting CSV and TXT report files.
+
+    A multi-section text DSR is a whole workbook in text form, so it honours
+    `mode` exactly as an Excel upload does. A single table (bookings, leads or
+    stock) is always ADDED to the month - there is no sensible "replace the
+    month" for one table out of twelve - and the result says so in `mode`.
     """
     text = decode_bytes(content)
     if not text.strip():
@@ -185,10 +192,16 @@ def ingest_text_report(
     if is_multi_section_dsr(text):
         wb = build_workbook_from_sections(text)
         with db_connect(autocommit=True) as cx:
-            loader = Loader(cx, wb, period_label, period_start, period_end)
-            counts = loader.run()
+            # FIX (2026-10-08): ran on a bare autocommit connection, so a load
+            # that failed part-way left reset()'s deletes committed and the
+            # month empty. One transaction now, as the Excel upload uses. The
+            # upload's chosen mode is passed through too - it was ignored.
+            with cx.transaction():
+                loader = Loader(cx, wb, period_label, period_start, period_end, mode=mode)
+                counts = loader.run()
             return {
                 "detected_format": "multi_section_dsr_text",
+                "mode": loader.mode,
                 "counts": counts,
                 "warnings": loader.warnings,
                 "sheets_parsed": [ws.title for ws in wb.worksheets],
@@ -204,7 +217,12 @@ def ingest_text_report(
     data_rows = rows[1:]
     kind = detect_table_type(headers, table_type)
 
-    with db_connect(autocommit=True) as cx:
+    # FIX (2026-10-08): this used autocommit=True, so every row committed on its
+    # own and a file that failed on row 200 left 199 rows in the database with
+    # no etl_run record of how they got there. Without autocommit the `with`
+    # block is one transaction: it commits when the block finishes and rolls
+    # the whole file back if anything in it raises.
+    with db_connect() as cx:
         # Ensure period exists in dim_period
         p_row = cx.execute("""
             INSERT INTO dim_period (label, period_start, period_end)
@@ -215,9 +233,8 @@ def ingest_text_report(
         """, (period_label, period_start, period_end)).fetchone()
         period_id = p_row[0]
 
-        # Activate this period
-        cx.execute("UPDATE dim_period SET is_active = false WHERE is_active")
-        cx.execute("UPDATE dim_period SET is_active = true WHERE period_id = %s", (period_id,))
+        # The month is activated at the end, through dims.activate_period, once
+        # the rows are in - see the note there.
 
         counts: dict[str, int] = {}
         inserted = 0
@@ -241,17 +258,23 @@ def ingest_text_report(
                 def get_val(idx: int | None):
                     return r[idx].strip() if idx is not None and idx < len(r) and r[idx].strip() else None
 
-                cust_name = get_val(col_cust)
+                # PII POLICY (2026-10-08): a phone/email inside the name is cut out.
+                cust_name = pii.scrub_text(get_val(col_cust))
                 if not cust_name:
                     continue
 
                 b_date = parse_cell_date(get_val(col_date)) or date.today()
                 consultant_name = get_val(col_cons)
                 consultant_id = dims.resolve_consultant(cx, consultant_name, activate=True) if consultant_name else None
-                model_name = get_val(col_model) or "TAIGUN"
-                model_id = dims.resolve_model(cx, model_name)
+                # FIX (2026-10-08): a row with no model column used to be filed
+                # as a TAIGUN booking, and one with no model year as this year's
+                # car - figures nobody entered, indistinguishable from real ones.
+                # Missing values now stay missing (NULL).
+                model_name = get_val(col_model)
+                model_id = dims.resolve_model(cx, model_name) if model_name else None
                 variant_name = get_val(col_var)
-                variant_id = dims.resolve_variant(cx, model_name, variant_name) if variant_name else None
+                variant_id = (dims.resolve_variant(cx, model_name, variant_name)
+                              if variant_name and model_name else None)
                 colour_name = get_val(col_col)
                 colour_id = dims.resolve_colour(cx, colour_name) if colour_name else None
                 source_name = get_val(col_src)
@@ -260,13 +283,20 @@ def ingest_text_report(
                 fulfilment = nz.fulfilment_status(get_val(col_stat)) or "BOOKED"
                 crm_done = nz.as_bool(get_val(col_crm)) or False
                 amount = nz.as_num(get_val(col_amt))
-                my = nz.as_int(get_val(col_my)) or date.today().year
-                mobile = nz.mobile(get_val(col_mobile))
-                notes = get_val(col_notes)
+                my = nz.as_int(get_val(col_my))
+                # PII POLICY (2026-10-08): the phone is never stored, and one
+                # typed into the notes is cut out of them - see etl/pii.py.
+                mobile = pii.redact(get_val(col_mobile))
+                notes = pii.scrub_text(get_val(col_notes))
 
-                # Check if in active period
-                in_current = (period_start <= b_date <= period_end)
-
+                # FIX (2026-10-08): load_period_id is now set on the row. It was
+                # left NULL, which the workbook loader reads as "inserted by the
+                # load running right now" - so the next workbook upload, for ANY
+                # month, could merge these bookings into its own or delete them
+                # (load_bookings' de-duplication), and stamp_load() then filed
+                # the survivors under that other month. Stamped here, they
+                # belong to this month's uploads like any workbook row, and a
+                # replace upload of this month is what removes them.
                 cx.execute("""
                     INSERT INTO booking (
                         booking_date, customer_name, mobile, source_id,
@@ -274,27 +304,25 @@ def ingest_text_report(
                         colour_id, model_year, fulfilment_status,
                         car_origin, crm_entry_done, booking_amount, notes,
                         source_sheet, period_id, is_current_period,
-                        origin, entered_by
+                        origin, entered_by, load_period_id
                     ) VALUES (
                         %s, %s, %s, %s,
                         %s, (SELECT team_id FROM dim_consultant WHERE consultant_id = %s),
                         %s, %s, %s, %s, %s,
                         'FRESH_CAR', %s, %s, %s,
-                        %s, %s, %s,
-                        'WORKBOOK', %s
+                        %s, %s, false,
+                        'WORKBOOK', %s, %s
                     )
                 """, (
                     b_date, cust_name, mobile, source_id,
                     consultant_id, consultant_id,
                     model_id, variant_id, colour_id, my, fulfilment,
                     crm_done, amount, notes,
-                    f"Uploaded {filename}", period_id, in_current,
-                    uploaded_by,
+                    f"Uploaded {filename}", period_id,
+                    uploaded_by, period_id,
                 ))
                 inserted += 1
 
-            # Realign fact rows for active period
-            cx.execute("UPDATE booking SET is_current_period = COALESCE(period_id = %s, false)", (period_id,))
             counts["booking"] = inserted
 
         elif kind == "lead":
@@ -311,44 +339,63 @@ def ingest_text_report(
                 def get_val(idx: int | None):
                     return r[idx].strip() if idx is not None and idx < len(r) and r[idx].strip() else None
 
-                name = get_val(col_name)
+                # PII POLICY (2026-10-08): a phone/email inside the name is cut out.
+                name = pii.scrub_text(get_val(col_name))
                 if not name:
                     continue
 
                 l_date = parse_cell_date(get_val(col_date)) or date.today()
                 consultant_name = get_val(col_cons)
                 consultant_id = dims.resolve_consultant(cx, consultant_name, activate=True) if consultant_name else None
-                model_name = get_val(col_model) or "TAIGUN"
-                model_id = dims.resolve_model(cx, nz.model_from_text(model_name))
+                # FIX (2026-10-08): a lead with no model was recorded as
+                # interested in a TAIGUN, every unrated lead as HOT, and the
+                # lead's channel was written into lead_type (which holds
+                # Retail / Corporate, not a channel). None of that was in the
+                # file. Missing values now stay missing.
+                model_name = get_val(col_model)
+                model_id = dims.resolve_model(cx, nz.model_from_text(model_name)) if model_name else None
                 source_name = get_val(col_src)
                 source_id = dims.resolve_source(cx, source_name) if source_name else None
-                mobile = nz.mobile(get_val(col_mobile))
+                # PII POLICY (2026-10-08): the phone is never stored.
+                mobile = pii.redact(get_val(col_mobile))
                 qualified = nz.as_bool(get_val(col_qual))
                 stage = "Qualified" if qualified else "New"
-                rating = get_val(col_rating) or "HOT"
-                in_current = (period_start <= l_date <= period_end)
+                rating = get_val(col_rating)
 
-                cx.execute("""
+                # FIX (2026-10-08): two provenance problems, the same as the
+                # bookings above plus one more. load_period_id was never set
+                # (so a later workbook upload claimed these rows), and
+                # entered_by WAS set - which db/triggers.sql lead_fill_direct()
+                # treats as "typed by a person" and forces origin to MANUAL. So
+                # uploaded leads were labelled hand-entered, listed under
+                # Recently Recorded, and survived a replace upload of their own
+                # month while the bookings from the same file did not. The row
+                # is inserted without entered_by, so it stays WORKBOOK, and the
+                # uploader's name is written back just after (the trigger only
+                # runs on INSERT).
+                lead_id = cx.execute("""
                     INSERT INTO lead (
-                        lead_name, mobile, source_id, lead_type,
+                        lead_name, mobile, source_id,
                         model_of_interest, model_id, consultant_id, rating,
                         qualified_stage, created_at, period_id,
-                        is_current_period, origin, entered_by
+                        is_current_period, origin, load_period_id
                     ) VALUES (
-                        %s, %s, %s, %s,
+                        %s, %s, %s,
                         %s, %s, %s, %s,
                         %s, %s, %s,
-                        %s, 'WORKBOOK', %s
+                        false, 'WORKBOOK', %s
                     )
+                    RETURNING lead_id
                 """, (
-                    name, mobile, source_id, source_name or "WALKIN",
+                    name, mobile, source_id,
                     model_name, model_id, consultant_id, rating,
                     stage, l_date, period_id,
-                    in_current, uploaded_by,
-                ))
+                    period_id,
+                )).fetchone()[0]
+                cx.execute("UPDATE lead SET entered_by = %s WHERE lead_id = %s",
+                           (uploaded_by, lead_id))
                 inserted += 1
 
-            cx.execute("UPDATE lead SET is_current_period = COALESCE(period_id = %s, false)", (period_id,))
             counts["lead"] = inserted
 
         elif kind == "vehicle":
@@ -368,15 +415,20 @@ def ingest_text_report(
                 if not chassis:
                     continue
 
-                model_name = get_val(col_model) or "TAIGUN"
-                model_id = dims.resolve_model(cx, model_name)
+                # FIX (2026-10-08): a car with no model was stocked as a TAIGUN,
+                # with no ageing as 0 days old, and with no billing date as
+                # billed today - which also hid it from the 90-day ageing
+                # figures. Missing values now stay missing.
+                model_name = get_val(col_model)
+                model_id = dims.resolve_model(cx, model_name) if model_name else None
                 variant_name = get_val(col_var)
-                variant_id = dims.resolve_variant(cx, model_name, variant_name) if variant_name else None
+                variant_id = (dims.resolve_variant(cx, model_name, variant_name)
+                              if variant_name and model_name else None)
                 colour_name = get_val(col_col)
                 colour_id = dims.resolve_colour(cx, colour_name) if colour_name else None
                 status = nz.stock_status(get_val(col_stat)) or "FREESTOCK"
-                aging = nz.as_int(get_val(col_aging)) or 0
-                billing = parse_cell_date(get_val(col_bill)) or date.today()
+                aging = nz.as_int(get_val(col_aging))
+                billing = parse_cell_date(get_val(col_bill))
 
                 cx.execute("""
                     INSERT INTO vehicle (
@@ -385,7 +437,10 @@ def ingest_text_report(
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (chassis_number) DO UPDATE SET
                         stock_status = EXCLUDED.stock_status,
-                        stock_aging_days = EXCLUDED.stock_aging_days,
+                        -- FIX (2026-10-08): a file without an ageing column
+                        -- used to reset every known car to 0 days; now the
+                        -- existing figure is kept when the file has none.
+                        stock_aging_days = COALESCE(EXCLUDED.stock_aging_days, vehicle.stock_aging_days),
                         model_id = COALESCE(vehicle.model_id, EXCLUDED.model_id),
                         variant_id = COALESCE(vehicle.variant_id, EXCLUDED.variant_id),
                         colour_id = COALESCE(vehicle.colour_id, EXCLUDED.colour_id)
@@ -394,9 +449,19 @@ def ingest_text_report(
 
             counts["vehicle"] = inserted
 
+        # FIX (2026-10-08): this activated the month in dim_period but then
+        # realigned is_current_period on only the ONE table it had loaded. A
+        # bookings CSV for SEP2026 uploaded while AUG2026 was showing therefore
+        # left the dashboard on September's bookings against August's leads.
+        # activate_period() realigns every fact table together, the same way a
+        # workbook upload does.
+        dims.activate_period(cx, period_label)
+
         return {
             "detected_format": f"delimited_{delimiter}",
             "detected_table": kind,
+            # A single table is always added to the month - see the docstring.
+            "mode": "append",
             "counts": counts,
             "total_rows_imported": inserted,
         }

@@ -137,15 +137,22 @@ function BookingPace({ orderbook = [], target = 0 }) {
       data.push({
         day,
         Booked: run,
-        'Target pace': Math.round((target * day) / days),
+        ...(target > 0 ? { 'Target pace': Math.round((target * day) / days) } : {}),
       });
     }
   }
 
+  // FIX (2026-10-08): a month with no booking target drew a "Target pace"
+  // line flat along zero (and, before client.js stopped substituting it,
+  // August's 84). With no target there is no pace to draw, so the line and
+  // its legend entry are left out.
+  const hasTarget = target > 0;
+
   return (
     <Panel
       title="Booking Pace"
-      sub="Cumulative bookings against an even target pace"
+      sub={hasTarget ? 'Cumulative bookings against an even target pace'
+                     : 'Cumulative bookings · no target set for this month'}
       empty={!data.length}
     >
       <ResponsiveContainer width="100%" height="100%">
@@ -161,12 +168,14 @@ function BookingPace({ orderbook = [], target = 0 }) {
             {...LEGEND}
             content={<OrderedLegend items={[
               { label: 'Booked', color: 'var(--viz-1)' },
-              { label: 'Target pace', color: 'var(--viz-2)' },
+              ...(hasTarget ? [{ label: 'Target pace', color: 'var(--viz-2)' }] : []),
             ]} />}
           />
-          <Line
-            type="monotone" dataKey="Target pace" stroke="var(--viz-2)"
-            strokeWidth={2} strokeDasharray="5 4" dot={false} />
+          {hasTarget && (
+            <Line
+              type="monotone" dataKey="Target pace" stroke="var(--viz-2)"
+              strokeWidth={2} strokeDasharray="5 4" dot={false} />
+          )}
           <Line
             type="monotone" dataKey="Booked" stroke="var(--viz-1)"
             strokeWidth={2} dot={false} activeDot={{ r: 5 }} />

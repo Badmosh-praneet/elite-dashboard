@@ -52,12 +52,16 @@ async function fetchBundled(onProgress) {
   if (onProgress) onProgress(DASHBOARD_CALLS);
   const stage = name => (d.funnel?.stages || []).find(s => s.stage === name)?.target;
   return {
+    // FIX (2026-10-08): each target fell back to August 2026's figure (84
+    // bookings, 66 retails, 450 enquiries, 300 test drives) when the month had
+    // none, so a month with no targets loaded showed August's as if they were
+    // its own. A missing target is now null, and the panels say "no target".
     kpi: {
       ...d.kpi,
-      booking_target: d.kpi?.booking_target ?? stage("Bookings") ?? 84,
-      retail_target: d.kpi?.retail_target ?? stage("Retails") ?? 66,
-      leads_target: d.kpi?.leads_target ?? stage("Enquiries") ?? 450,
-      td_target: d.kpi?.td_target ?? stage("Test drives") ?? 300,
+      booking_target: d.kpi?.booking_target ?? stage("Bookings") ?? null,
+      retail_target: d.kpi?.retail_target ?? stage("Retails") ?? null,
+      leads_target: d.kpi?.leads_target ?? stage("Enquiries") ?? null,
+      td_target: d.kpi?.td_target ?? stage("Test drives") ?? null,
     },
     trends: d.trends || {},
     funnel: d.funnel || {},
@@ -68,7 +72,9 @@ async function fetchBundled(onProgress) {
     backorders: d.backorders || [],
     periods: d.periods || [],
     options: d.options || {},
-    activity: [],
+    // FIX (2026-10-08): was hard-coded to [], so "Recently Recorded" never
+    // showed anything; the bundle now carries the feed (app/main.py).
+    activity: d.activity || [],
     orderbook: d.orderbook || [],
     scorecards: d.scorecards || [],
     commitments: d.commitments || [],
@@ -124,12 +130,14 @@ export async function fetchDashboardData(onProgress) {
       if (s.stage && s.target != null) targetsByStage[s.stage] = s.target;
     });
 
+    // FIX (2026-10-08): same as the bundled path - no August targets standing
+    // in for a month that has none.
     const enrichedKpi = {
       ...kpi,
-      booking_target: kpi.booking_target ?? targetsByStage["Bookings"] ?? 84,
-      retail_target: kpi.retail_target ?? targetsByStage["Retails"] ?? 66,
-      leads_target: kpi.leads_target ?? targetsByStage["Enquiries"] ?? 450,
-      td_target: kpi.td_target ?? targetsByStage["Test drives"] ?? 300,
+      booking_target: kpi.booking_target ?? targetsByStage["Bookings"] ?? null,
+      retail_target: kpi.retail_target ?? targetsByStage["Retails"] ?? null,
+      leads_target: kpi.leads_target ?? targetsByStage["Enquiries"] ?? null,
+      td_target: kpi.td_target ?? targetsByStage["Test drives"] ?? null,
     };
 
     return {
@@ -188,12 +196,16 @@ export async function fetchDashboardData(onProgress) {
   }
 }
 
-export async function uploadReportFile(file, period, uploadedBy, tableType) {
+export async function uploadReportFile(file, period, uploadedBy, tableType, mode) {
   const formData = new FormData();
   formData.append("file", file);
   if (period) formData.append("period", period);
   if (uploadedBy) formData.append("uploaded_by", uploadedBy);
   if (tableType && tableType !== "auto") formData.append("table_type", tableType);
+  // FIX (2026-10-08): the replace/append choice in the upload dialog was never
+  // sent for CSV and text files. A sectioned text DSR now honours it; a
+  // single-table CSV is always added, and the reply's `mode` says so.
+  if (mode) formData.append("mode", mode);
 
   // A DSR workbook takes the better part of two minutes to ingest: ~2,600 rows
   // against a database a round trip away. Anything that goes wrong in that

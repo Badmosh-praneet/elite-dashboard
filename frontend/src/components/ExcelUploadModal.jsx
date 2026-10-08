@@ -107,7 +107,7 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
         ? await uploadWorkbookInBackground(file, period, uploader,
             job => setStep(job.step || job.state || ''),
             { mode: effectiveMode, covers, coversDate, coversDateEnd })
-        : await uploadReportFile(file, period, uploader, tableType);
+        : await uploadReportFile(file, period, uploader, tableType, effectiveMode);
       setResult(data);
       onUploadComplete(
         data.mode === 'append'
@@ -137,6 +137,9 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
 
   const badge = file ? getFormatBadge(file.name) : null;
   const BadgeIcon = badge?.icon || FileSpreadsheet;
+  // A CSV or text file is only a whole DSR when it is split into [Sheet: ...]
+  // sections; a plain table of bookings, leads or stock is always added.
+  const isTextFile = !!file && !/\.(xlsx|xlsm|xls)$/i.test(file.name);
 
   return (
     <div className="drawer-scrim" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
@@ -365,6 +368,16 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
             </label>
           </div>
 
+          {/* FIX (2026-10-08): this warning was wrong in two ways.
+              1. For "Replace the month" it quoted the figures for DELETING the
+                 month (every row filed under it, hand-entered ones included)
+                 and said hand-entered rows "will also be replaced". A replace
+                 upload actually removes only the rows this month's previous
+                 uploads produced, plus its targets, and keeps hand-entered
+                 rows (etl/load_dsr.py reset()). It now quotes exactly that,
+                 from replaced_by_upload / kept_on_upload (app/entry.py).
+              2. For a CSV it said the month would be replaced, but a plain
+                 table is always added to the month. It now says so. */}
           {replacing && (
             <div style={{
               border: '1px solid ' + (replacing.missing ? 'var(--grid)' : 'var(--warning)'),
@@ -382,24 +395,32 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                 effectiveMode === 'append' ? (
                 <>
                   This <b>adds to</b> <b>{replacing.label}</b>, which currently holds{' '}
-                  {n0(replacing.total)} rows. Nothing existing is removed. Rows identical
-                  to ones already there are skipped, so re-sending the same file is safe.
+                  {n0(replacing.total)} rows. Nothing existing is removed.
+                  {isTextFile
+                    ? <> A plain CSV table is added as-is, so sending the same file twice adds its rows twice.</>
+                    : <> Rows identical to ones already there are skipped, so re-sending the same file is safe.</>}
                 </>
               ) : (
                 <>
-                  This <b>replaces</b> everything currently in <b>{replacing.label}</b>
-                  {replacing.total > 0
-                    ? <> &mdash; {n0(replacing.total)} rows
-                        {replacing.counts && Object.keys(replacing.counts).length > 0 && (
-                          <> ({Object.entries(replacing.counts)
-                              .map(([k, v]) => `${n0(v)} ${k.replace(/_/g, ' ')}`)
+                  {isTextFile && (
+                    <div style={{ marginBottom: 6 }}>
+                      A plain CSV table (bookings, leads or stock) is always <b>added</b> to the month.
+                      Only a full DSR split into <code>[Sheet: …]</code> sections replaces it, as below.
+                    </div>
+                  )}
+                  This <b>replaces</b> what earlier uploads loaded into <b>{replacing.label}</b>
+                  {replacing.replaced_by_upload_total > 0
+                    ? <> &mdash; {n0(replacing.replaced_by_upload_total)} rows
+                        {replacing.replaced_by_upload && Object.keys(replacing.replaced_by_upload).length > 0 && (
+                          <> ({Object.entries(replacing.replaced_by_upload)
+                              .map(([k, v]) => `${n0(v)} ${k.replace(/^target_/, '').replace(/_/g, ' ')}`)
                               .join(', ')})</>
                         )}. It is not added alongside.</>
-                    : <>, which is currently empty.</>}
-                  {replacing.hand_entered > 0 && (
-                    <div style={{ color: 'var(--critical)', marginTop: 6 }}>
-                      {n0(replacing.hand_entered)} of those were entered by hand on the dashboard
-                      and will also be replaced.
+                    : <>, which has nothing loaded from a file yet.</>}
+                  {replacing.kept_on_upload > 0 && (
+                    <div style={{ color: 'var(--good-text)', marginTop: 6 }}>
+                      {n0(replacing.kept_on_upload)} rows entered by hand on the dashboard
+                      are kept.
                     </div>
                   )}
                 </>

@@ -142,14 +142,15 @@ def _tool_get_action_list(args: dict) -> Any:
 def _tool_get_vehicle_availability(args: dict) -> Any:
     """Free stock matching a model, trim and colour. An empty list used to
     come back bare, and a model had to guess what it meant; now it is said."""
-    from .main import agent_availability, agent_model_catalogue
+    from .main import agent_availability
     rows = agent_availability(model=args.get("model"), variant=args.get("variant"), colour=args.get("colour"))
     asked = " ".join(str(args.get(k)) for k in ("model", "variant", "colour") if args.get(k)) or "any car"
     out = {"asked_for": asked, "found": len(rows), "cars": rows}
     if not rows:
+        from .test_drives import _cars
         model = (args.get("model") or "").strip().lower()
-        families = sorted({(r.get("family") or r.get("model") or "").title() for r in agent_model_catalogue()} - {""})
-        sold = any(model and (model in f.lower() or f.lower() in model) for f in families)
+        families = [c["name"] for c in _cars()]
+        sold = any(model and (model in f.lower() or f.lower().split()[0] in model) for f in families)
         out["answer"] = (f"{args.get('model')} is not a model this dealership sells. Models: {', '.join(families)}."
                          if model and not sold else f"No {asked} in free stock right now.")
     else:
@@ -172,8 +173,41 @@ def _tool_get_order_status(args: dict) -> Any:
 
 
 def _tool_get_model_catalogue(args: dict) -> Any:
+    """Each model family with its trims, each counted once. As catalogue rows
+    the Taigun read as 20 variants - the Taigun and the Taigun facelift list
+    the same trims, and some are spelled twice - and the agent answered 12 and
+    listed 11. It is 10 trims."""
     from .main import agent_model_catalogue
-    return agent_model_catalogue()
+    from .test_drives import _cars, distinct_trims
+    want = (args.get("model") or "").strip().lower()
+    groups: dict[str, list[dict]] = {}
+    for r in agent_model_catalogue():
+        groups.setdefault((r.get("family") or r.get("model") or "").strip().upper(), []).append(r)
+    families = []
+    # Every model sold, as the board names them - the Tiguan R-Line has no
+    # trims in the catalogue, and listing only what had trims left it out.
+    for car in _cars():
+        rows = groups.get(car["family"].upper(), [])
+        names = [car["name"].lower(), car["family"].lower()] + [(r.get("model") or "").lower() for r in rows]
+        if want and not any(want in n or n in want for n in names if n):
+            continue
+        trims = distinct_trims([(r.get("variant"), r.get("long_model_text")) for r in rows])
+        families.append({
+            "model": car["name"],
+            "listed_as": sorted({r.get("model") for r in rows if r.get("model")}),
+            "trims": trims,
+            "trim_count": len(trims),
+            "free_units": sum(int(r.get("free_units") or 0) for r in rows),
+        })
+    if not families:
+        return {"families": [], "answer": f"{args.get('model')} is not a model this dealership sells."}
+    return {
+        "families": families,
+        "note": "Each trim is counted once: the Taigun and the Taigun facelift (FL) list the same trims.",
+        "answer": "; ".join(f"{f['model']}: " + (f"{f['trim_count']} trim{'s' if f['trim_count'] != 1 else ''}"
+                                                   if f["trim_count"] else "trims not listed in the catalogue")
+                            for f in families) + ".",
+    }
 
 
 def _tool_get_leads(args: dict) -> Any:
@@ -372,8 +406,10 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_model_catalogue",
-        "description": "Every model and trim the dealership actually transacts, with live free stock counts.",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": "Every model family the dealership sells, with its trims (variants) each counted once and free stock per family - 'how many variants of the Taigun' is its trim_count. Pass model for one family.",
+        "input_schema": {"type": "object", "properties": {
+            "model": {"type": "string", "description": "One model, e.g. Taigun or Virtus; leave out for all"},
+        }},
     },
     {
         "name": "get_leads",

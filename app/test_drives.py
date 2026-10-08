@@ -195,6 +195,55 @@ def _variant_label(model: str, family: str, name: str | None, text: str | None) 
     return _title(" ".join(words)) if words else ""
 
 
+# Trim names as the catalogue spells them, longest first: "GT PLUS SPORT"
+# must win over "GT PLUS", and "GT PLUS" over a bare "SPORT".
+_TRIM_WORDS = (("GT PLUS SPORT", "GT Plus Sport"), ("GT PLUS", "GT Plus"), ("GT LINE", "GT Line"),
+               ("TOPLINE", "Topline"), ("HIGHLINE", "Highline"), ("COMFORTLINE", "Comfortline"),
+               ("CHROME", "Chrome"), ("SPORT", "Sport"))
+
+
+def trim_of(name: str | None, text: str | None) -> tuple[str, str | None, str | None]:
+    """A variant as (trim, gearbox, engine), however the catalogue spells it:
+    'HL MT' and 'TAIGUN 1.0L TSI 85kW MT Highline' are one trim. The 1.5 DSG
+    with no trim word is the GT Plus."""
+    t = f" {(text or '').upper()} {(name or '').upper()} "
+    t = re.sub(r"\bHL\b", "HIGHLINE", re.sub(r"\bCL\b", "COMFORTLINE", t))
+    trim = next((label for word, label in _TRIM_WORDS if word in t), None)
+    if "1.5" in t and trim in (None, "Sport"):
+        trim = "GT Plus Sport" if trim == "Sport" else "GT Plus"
+    gear = _GEARBOX.search(t)
+    engine = "1.5 TSI" if "1.5" in t else "1.0 TSI" if ("1.0" in t or "85KW" in t.replace(" ", "")) else None
+    return trim or _title((name or "").strip()), gear.group(1).upper() if gear else None, engine
+
+
+def distinct_trims(variants: list[tuple[str | None, str | None]]) -> list[str]:
+    """The trims a set of variants comes to, each once. Taigun and the Taigun
+    facelift list the same trims, and the catalogue spells some twice ('1.0
+    TSI COMFORTLINE' is 'CL MT'): counted as rows, the Taigun was 20 variants;
+    it is 10 trims. A trim named with no gearbox is one of its geared kind
+    when the catalogue has one."""
+    seen: dict[tuple[str, str | None], str | None] = {}
+    described: set[tuple[str, str | None]] = set()
+    words: set[str] = set()
+    for name, text in variants:
+        trim, gear, engine = trim_of(name, text)
+        seen[(trim, gear)] = seen.get((trim, gear)) or engine
+        if text:
+            described.add((trim, gear))
+        words |= set(re.findall(r"[A-Z0-9.]+", f"{text or ''} {name or ''}".upper()))
+    geared = {trim for trim, gear in seen if gear}
+
+    def short_form(trim: str, gear: str | None) -> bool:
+        # A bare name with no description that starts a longer word the
+        # family uses - 'GT' of 'GOLF GTI' - is a short form, not a trim.
+        if gear or (trim, gear) in described:
+            return False
+        return any(w != trim.upper() and w.startswith(trim.upper()) for w in words)
+
+    keep = [(t, g) for t, g in seen if (g or t not in geared) and not short_form(t, g)]
+    return sorted(" ".join(x for x in (seen[(t, g)], t, g) if x) for t, g in keep)
+
+
 _cars_cache: tuple[float, list[dict]] | None = None
 _CARS_TTL = 300               # the catalogue changes with a workbook, not by the minute
 
@@ -233,12 +282,13 @@ def _cars() -> list[dict]:
 
     families: dict[str, dict] = {}
     for r in rows:
-        fam = families.setdefault(r["family"], {"imported": False, "models": {}})
+        fam = families.setdefault(r["family"], {"imported": False, "models": {}, "raw": []})
         fam["imported"] = fam["imported"] or bool(r["is_cbu"])
         model = fam["models"].setdefault(r["model"], {
             "name": _title(r["model"]), "imported": bool(r["is_cbu"]), "variants": []})
         if r["variant_id"] is None:
             continue
+        fam["raw"].append((r["variant"], r["long_model_text"]))
         gear = _GEARBOX.search(f"{r['long_model_text'] or ''} {r['variant'] or ''}")
         model["variants"].append({
             "id": r["variant_id"],
@@ -253,8 +303,9 @@ def _cars() -> list[dict]:
         gearboxes = [g for g in ("MT", "AT", "DSG") if any(v["gearbox"] == g for v in variants)]
         # Short enough for the board's car column; the gearboxes go with the
         # full variant list on the Cars tab.
+        trims = distinct_trims(fam["raw"])
         bits = (["Imported"] if fam["imported"] else []) + (
-            [f"{len(variants)} variant{'' if len(variants) == 1 else 's'}"] if variants else [])
+            [f"{len(trims)} variant{'' if len(trims) == 1 else 's'}"] if trims else [])
         cars.append({
             "id": _slug(family),
             "family": family,

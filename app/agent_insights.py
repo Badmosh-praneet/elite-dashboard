@@ -158,6 +158,38 @@ def _tally(rows: list[dict], key: str) -> dict[str, int]:
     return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+def _against(n, target, what: str = "") -> str:
+    """'17 retails (target 52)', or with no target when the month has none."""
+    return f"{n}{' ' + what if what else ''}" + (f" (target {target})" if target is not None else "")
+
+
+def _grand_total(cx, period_id) -> dict:
+    """The dealership's line on a month's scorecard (its GRAND_TOTAL row), read
+    as the People page reads a consultant's: targets from the primary-channel
+    row, achievement summed. n is 0 when the month's workbook is not loaded."""
+    return cx.execute("""
+        SELECT max(leads_target)   FILTER (WHERE is_primary_channel) AS enquiry_target,
+               max(td_target)      FILTER (WHERE is_primary_channel) AS test_drive_target,
+               max(booking_target) FILTER (WHERE is_primary_channel) AS booking_target,
+               max(retail_target)  FILTER (WHERE is_primary_channel) AS retail_target,
+               sum(td_achieved)                                      AS test_drives,
+               count(*)                                              AS n
+          FROM target_consultant_scorecard
+         WHERE period_id = %s AND row_kind = 'GRAND_TOTAL'""", (period_id,)).fetchone()
+
+
+def _month_retails(cx, m: dict, consultant_id: int | None = None) -> int:
+    """A month's retails (see _RETAILED_IN_MONTH): the dealership's, or one consultant's."""
+    mine = " AND rg.consultant_id = %(c)s" if consultant_id is not None else ""
+    return cx.execute(f"SELECT count(*) AS n FROM registration rg WHERE {_RETAILED_IN_MONTH}{mine}",
+                      {"p": m["period_id"], "lo": m["from"], "hi": m["to"], "c": consultant_id}).fetchone()["n"]
+
+
+_RETAILS_NOTE = ("retails: cars registered in the month, as the DSR scorecard and the dashboard's headline "
+                 "count them. by_status is where each of the month's bookings stands now - its RETAILED "
+                 "count is not the month's retails.")
+
+
 def bookings_summary(month: str | None = None, date_from: str | None = None,
                      date_to: str | None = None) -> dict:
     """Bookings counted for a month or a span of days: the total, and by model
@@ -178,6 +210,16 @@ def bookings_summary(month: str | None = None, date_from: str | None = None,
            "by_consultant": _tally(rows, "consultant"), "by_status": _tally(rows, "status")}
     out["answer"] = (f"{when(about)}: {len(rows)} booking{'s' if len(rows) != 1 else ''}"
                      + (f" - by model: {_listing(out['by_model'])}." if rows else "."))
+    if about.get("period_id"):
+        # The month's retails beside its bookings. Asked for September's
+        # retails, the agent gave the bookings since retailed, from by_status
+        # (12); the month's retails - cars registered - are 17.
+        with session() as cx:
+            out["retails"] = _month_retails(cx, about)
+            out["retail_target"] = _num(_grand_total(cx, about["period_id"])["retail_target"])
+        out["retails_note"] = _RETAILS_NOTE
+        out["answer"] += (f" Retails (cars registered) in {when(about)}: "
+                          f"{_against(out['retails'], out['retail_target'])}.")
     return out
 
 
@@ -201,11 +243,34 @@ def leads_summary(month: str | None = None, date_from: str | None = None,
     out = {**_note(about), "total": len(rows), "qualified": sum(1 for r in rows if r["qualified"]),
            "by_source": _tally(rows, "source"), "by_model": _tally(rows, "model"),
            "by_consultant": _tally(rows, "consultant")}
+    if about.get("period_id"):
+        # By consultant as the scorecard and the People page count them. Leads
+        # from the CRM export carry no consultant: counted from the leads, 270
+        # of September's 271 had none, and Sanjeev had 0 - his scorecard says 27.
+        with session() as cx:
+            got = cx.execute(f"SELECT c.display_name AS name, {_ENQUIRIES_IN_MONTH} AS n FROM dim_consultant c",
+                             {"p": about["period_id"]}).fetchall()
+        out["by_consultant"] = dict(sorted(((r["name"], int(r["n"])) for r in got if r["n"]),
+                                           key=lambda kv: (-kv[1], kv[0])))
+        out["by_consultant_note"] = ("A consultant's enquiries as the scorecard and the People page count "
+                                     "them: the month's workbook figure plus enquiries entered since. Leads "
+                                     "from the CRM export carry no consultant, so these need not add up to "
+                                     "the total.")
     out["answer"] = (f"{when(about)}: {len(rows)} enquir{'ies' if len(rows) != 1 else 'y'}, "
                      f"{out['qualified']} qualified"
                      + (f" - by source: {_listing(out['by_source'])}." if rows else "."))
     return out
 
+
+# A consultant's enquiries for a month as the scorecard counts them: the
+# workbook's figure plus enquiries entered since. Leads loaded from the CRM
+# export carry no consultant, so counting leads alone found almost none.
+_ENQUIRIES_IN_MONTH = """(coalesce((SELECT sum(sc.total_leads) FROM target_consultant_scorecard sc
+                  WHERE sc.consultant_id = c.consultant_id AND sc.period_id = %(p)s
+                    AND sc.row_kind = 'CONSULTANT'), 0)
+       + (SELECT count(*) FROM lead l
+           WHERE l.consultant_id = c.consultant_id AND l.period_id = %(p)s
+             AND l.origin = 'MANUAL'))"""
 
 # A month's retails: the registrations its workbook listed - each workbook's
 # registration tab is that month's retails, and its scorecard counts exactly
@@ -232,15 +297,7 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
             SELECT c.display_name AS consultant, t.name AS team,
                    (SELECT count(*) FROM booking b
                      WHERE b.consultant_id = c.consultant_id AND b.period_id = %(p)s) AS bookings,
-                   -- Enquiries as the scorecard counts them: the workbook's figure for
-                   -- the month plus enquiries entered since. Leads loaded from the CRM
-                   -- export carry no consultant, so counting leads alone found almost none.
-                   coalesce((SELECT sum(sc.total_leads) FROM target_consultant_scorecard sc
-                              WHERE sc.consultant_id = c.consultant_id AND sc.period_id = %(p)s
-                                AND sc.row_kind = 'CONSULTANT'), 0)
-                   + (SELECT count(*) FROM lead l
-                       WHERE l.consultant_id = c.consultant_id AND l.period_id = %(p)s
-                         AND l.origin = 'MANUAL') AS enquiries,
+                   {_ENQUIRIES_IN_MONTH} AS enquiries,
                    (SELECT max(sc.booking_target) FROM target_consultant_scorecard sc
                      WHERE sc.consultant_id = c.consultant_id AND sc.period_id = %(p)s
                        AND sc.is_primary_channel) AS booking_target,
@@ -284,7 +341,7 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
 # the sentence that answers it.
 
 _TOP = {
-    "consultants": ("bookings", "enquiries"),
+    "consultants": ("bookings", "enquiries", "test_drives", "retails"),
     "models": ("bookings", "enquiries", "free_stock", "backorders"),
     "sources": ("enquiries", "qualified"),
     "bookings": ("amount",),
@@ -307,9 +364,11 @@ _BY = {
     "stock": "free_stock", "free stock": "free_stock", "backorder": "backorders", "no stock": "backorders",
     "value": "amount", "booking amount": "amount", "ageing": "age", "aging": "age", "days": "age",
     "test drives": "test_drives", "test drive": "test_drives", "drives": "test_drives",
+    "retail": "retails", "registrations": "retails", "registered": "retails",
 }
 _UNITS = {"bookings": "bookings", "enquiries": "enquiries", "qualified": "qualified enquiries",
-          "free_stock": "cars in free stock", "backorders": "backorders", "test_drives": "test drive bookings"}
+          "free_stock": "cars in free stock", "backorders": "backorders", "test_drives": "test drive bookings",
+          "retails": "retails"}
 
 
 def _span_words(text: str | None) -> bool:
@@ -319,7 +378,8 @@ def _span_words(text: str | None) -> bool:
 
 def top(what: str, by: str | None = None, month: str | None = None, date_from: str | None = None,
         date_to: str | None = None, n: int = 5) -> dict:
-    """The top n of something, ranked: consultants (by bookings or enquiries),
+    """The top n of something, ranked: consultants (by bookings, enquiries,
+    test drives or retails),
     models (by bookings, enquiries, free stock or backorders), lead sources (by
     enquiries or qualified), single bookings (by amount), free stock (by age),
     and test drives by car or by executive. A month (default: this calendar
@@ -335,8 +395,12 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
         raise HTTPException(400, f"{w} can be ranked by: {', '.join(_TOP[w])}.")
     n = max(1, min(int(n or 5), 50))
 
+    if w == "consultants" and b == "retails" and (date_from or date_to or _span_words(month)):
+        raise HTTPException(400, "Retails are counted by month: pass a month, e.g. 'September'.")
+
     rows: list[dict] = []
     about: dict = {}
+    scorecard = False        # ranked from a DSR scorecard rather than the calendar
     if w == "stock" or (w == "models" and b == "free_stock"):
         about = {"period": "now"}
         with session() as cx:
@@ -351,28 +415,8 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
                 rows = [{"name": r["model"], "value": r["free_stock"]} for r in cx.execute(
                     "SELECT model, free_stock FROM v_model_position WHERE free_stock > 0 "
                     "ORDER BY free_stock DESC, model").fetchall()]
-    elif w in ("test_drive_cars", "test_drive_executives"):
-        from .crm_api import _date_clause, span
-        if not (date_from or date_to) and span(month):
-            date_from = date_to = month
-        if date_from or date_to:
-            lo, hi = _date_clause("x", date_from, date_to)[1]
-            about = {"from": lo.isoformat(), "to": hi.isoformat()}
-        else:
-            about = resolve_month(month)
-            lo, hi = date.fromisoformat(about["from"]), date.fromisoformat(about["to"])
-        key = "car_id" if w == "test_drive_cars" else "coalesce(consultant, 'Not assigned')"
-        with session() as cx:
-            got = cx.execute(f"""
-                SELECT {key} AS k, count(*) AS n FROM dsr.test_drive_booking
-                 WHERE td_date BETWEEN %s AND %s AND status IN ('booked', 'attended', 'no_show')
-                   AND start_time IS NOT NULL AND NOT sample
-                 GROUP BY 1 ORDER BY 2 DESC, 1""", (lo, hi)).fetchall()
-        from .test_drives import _cars
-        names = {c["id"]: c["name"] for c in _cars()}
-        rows = [{"name": names.get(r["k"], r["k"]) if w == "test_drive_cars" else r["k"], "value": r["n"]}
-                for r in got]
-        about["note"] = "Real test drives only; the sample drives are left out."
+    elif w in ("test_drive_cars", "test_drive_executives") or (w == "consultants" and b == "test_drives"):
+        about, rows, scorecard = _test_drive_ranking(w, month, date_from, date_to)
     elif w == "bookings":
         where, params, about = _scope(month, date_from, date_to, "b.booking_date", "b")
         with session() as cx:
@@ -397,6 +441,10 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
         if b == "bookings":
             rows = [{"name": e["consultant"], "value": e["bookings"], "booking_target": e["booking_target"],
                      "pct_of_target": e["pct_of_target"]} for e in board["consultants"] if e["bookings"]]
+        elif b == "retails":
+            ranked = sorted((e for e in board["consultants"] if e["retails"]),
+                            key=lambda e: (-e["retails"], e["consultant"]))
+            rows = [{"name": e["consultant"], "value": e["retails"], "bookings": e["bookings"]} for e in ranked]
         else:
             ranked = sorted((e for e in board["consultants"] if e["enquiries"]),
                             key=lambda e: (-e["enquiries"], e["consultant"]))
@@ -439,6 +487,9 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
     elif w == "stock":
         title = "oldest cars in free stock"
         fmt = lambda r: f"{r['name']} - {r['value']} days"
+    elif scorecard:
+        title = "consultants by test drives (DSR scorecard)"
+        fmt = lambda r: f"{r['name']} - {_against(r['value'], r['target'])}"
     else:
         label = {"consultants": "consultants", "models": "models", "sources": "lead sources",
                  "test_drive_cars": "cars", "test_drive_executives": "executives"}[w]
@@ -455,6 +506,62 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
             "rows": rows, "answer": answer}
 
 
+def _calendar_ranking(w: str, month: str | None, date_from: str | None,
+                      date_to: str | None) -> tuple[dict, list[dict]]:
+    """Real test drives on the Test Drives calendar, by car or by executive."""
+    from .crm_api import _date_clause, span
+    if not (date_from or date_to) and span(month):
+        date_from = date_to = month
+    if date_from or date_to:
+        lo, hi = _date_clause("x", date_from, date_to)[1]
+        about = {"from": lo.isoformat(), "to": hi.isoformat()}
+    else:
+        about = resolve_month(month)
+        lo, hi = date.fromisoformat(about["from"]), date.fromisoformat(about["to"])
+    key = "car_id" if w == "test_drive_cars" else "coalesce(consultant, 'Not assigned')"
+    with session() as cx:
+        got = cx.execute(f"""
+            SELECT {key} AS k, count(*) AS n FROM dsr.test_drive_booking
+             WHERE td_date BETWEEN %s AND %s AND status IN ('booked', 'attended', 'no_show')
+               AND start_time IS NOT NULL AND NOT sample
+             GROUP BY 1 ORDER BY 2 DESC, 1""", (lo, hi)).fetchall()
+    from .test_drives import _cars
+    names = {c["id"]: c["name"] for c in _cars()}
+    rows = [{"name": names.get(r["k"], r["k"]) if w == "test_drive_cars" else r["k"], "value": r["n"]}
+            for r in got]
+    about["note"] = "Real test drives only; the sample drives are left out."
+    return about, rows
+
+
+def _test_drive_ranking(w: str, month: str | None, date_from: str | None,
+                        date_to: str | None) -> tuple[dict, list[dict], bool]:
+    """Test drives ranked by car, or by person. A person's test drives for a
+    month are what its DSR scorecard records - the calendar began on 6 Oct
+    2026 and before that holds only samples, so asked who did the most test
+    drives in September there was nothing to rank. Consultants are ranked
+    from the scorecard; executives from the calendar's real drives, unless it
+    has none for the month. Returns (about, rows, from the scorecard)."""
+    by_month = not (date_from or date_to) and not _span_words(month)
+    if w == "consultants" and by_month:
+        m = resolve_month(month)
+        rows = _scorecard_test_drives_by_consultant(m)
+        if rows is not None:
+            return ({**m, "note": f"From the {when(m)} DSR scorecard - the dealership's record of each "
+                                  f"consultant's test drives."}, rows, True)
+    about, rows = _calendar_ranking("test_drive_cars" if w == "test_drive_cars" else "test_drive_executives",
+                                    month, date_from, date_to)
+    if w == "consultants" and by_month:
+        about["note"] = (f"No DSR scorecard for {when(about)} yet, so these are the Test Drives calendar's "
+                         f"real drives, by executive.")
+    if w != "test_drive_cars" and by_month and not [r for r in rows if r["name"] != "Not assigned"]:
+        from_card = _scorecard_test_drives_by_consultant(about)
+        if from_card:
+            return ({**about, "note": f"The Test Drives calendar has no real drives to rank for {when(about)} - "
+                                      f"it began on 6 Oct 2026 - so these are the {when(about)} DSR "
+                                      f"scorecard's test drives."}, from_card, True)
+    return about, rows, False
+
+
 # ------------------------------------------------------------ scorecards
 
 _CARD = ("leads_target", "total_leads", "td_target", "td_achieved", "booking_target", "booking_achieved",
@@ -469,6 +576,58 @@ def _num(v):
     return int(f) if f.is_integer() else round(f, 1)
 
 
+def _scorecard_months(cx) -> list[str]:
+    """The months with a scorecard loaded, newest first."""
+    return [r["label"] for r in cx.execute("""
+        SELECT p.label FROM dim_period p
+         WHERE EXISTS (SELECT 1 FROM target_consultant_scorecard t WHERE t.period_id = p.period_id)
+         ORDER BY p.period_start DESC""").fetchall()]
+
+
+def _card(cx, consultant_id: int, name: str, m: dict) -> dict | None:
+    """One consultant's scorecard for a month (as resolve_month gives it), or
+    None when the month's workbook has no row for them. For the month the
+    dashboard is set to, the People page's own figures; for another, the
+    workbook's, with bookings and enquiries counted as the People page counts
+    them. Retails are the month's registrations either way."""
+    if m["month"] == m["dashboard_month"]:
+        r = cx.execute("SELECT * FROM v_consultant_scorecard WHERE row_kind = 'CONSULTANT' AND consultant = %s",
+                       (name,)).fetchone()
+        if not r:
+            return None
+        card = {k: _num(r[k]) for k in _CARD}
+    else:
+        r = cx.execute("""
+            SELECT max(leads_target)       FILTER (WHERE is_primary_channel) AS leads_target,
+                   sum(total_leads)                                          AS total_leads,
+                   max(td_target)          FILTER (WHERE is_primary_channel) AS td_target,
+                   sum(td_achieved)                                          AS td_achieved,
+                   max(booking_target)     FILTER (WHERE is_primary_channel) AS booking_target,
+                   max(retail_target)      FILTER (WHERE is_primary_channel) AS retail_target,
+                   sum(retail_achieved)                                      AS retail_achieved,
+                   max(finance_target)     FILTER (WHERE is_primary_channel) AS finance_target,
+                   max(finance_achieved)   FILTER (WHERE is_primary_channel) AS finance_achieved,
+                   max(insurance_target)   FILTER (WHERE is_primary_channel) AS insurance_target,
+                   max(insurance_achieved) FILTER (WHERE is_primary_channel) AS insurance_achieved,
+                   count(*) AS n
+              FROM target_consultant_scorecard
+             WHERE consultant_id = %s AND period_id = %s AND row_kind = 'CONSULTANT'""",
+            (consultant_id, m["period_id"])).fetchone()
+        if not r["n"]:
+            return None
+        card = {k: _num(r[k]) for k in _CARD if k != "booking_achieved"}
+        # Bookings and enquiries as the People page counts them for its month.
+        card["booking_achieved"] = cx.execute(
+            "SELECT count(*) AS n FROM booking WHERE consultant_id = %s AND period_id = %s",
+            (consultant_id, m["period_id"])).fetchone()["n"]
+        card["total_leads"] = (card["total_leads"] or 0) + cx.execute(
+            "SELECT count(*) AS n FROM lead WHERE consultant_id = %s AND period_id = %s AND origin = 'MANUAL'",
+            (consultant_id, m["period_id"])).fetchone()["n"]
+    card["retail_achieved"] = _month_retails(cx, m, consultant_id)
+    card["consultant"] = name
+    return card
+
+
 def consultant_scorecard(name: str, month: str | None = None) -> dict:
     """One consultant's scorecard - enquiries, test drives, bookings, retails,
     finance and insurance against target - for any month that has one.
@@ -480,10 +639,7 @@ def consultant_scorecard(name: str, month: str | None = None) -> dict:
     latest month with a scorecard; for the month the dashboard is set to, the
     People page's own figures."""
     with session() as cx:
-        months = [r["label"] for r in cx.execute("""
-            SELECT p.label FROM dim_period p
-             WHERE EXISTS (SELECT 1 FROM target_consultant_scorecard t WHERE t.period_id = p.period_id)
-             ORDER BY p.period_start DESC""").fetchall()]
+        months = _scorecard_months(cx)
     if not months:
         raise HTTPException(404, "No scorecards have been loaded.")
     m = resolve_month(month or months[0])
@@ -497,57 +653,148 @@ def consultant_scorecard(name: str, month: str | None = None) -> dict:
                             (f"%{name.strip()}%",)).fetchall()
         if not people:
             raise HTTPException(404, f"No consultant matching {name!r}.")
-        cards = []
-        for c in people[:3]:
-            if m["month"] == m["dashboard_month"]:
-                r = cx.execute("SELECT * FROM v_consultant_scorecard WHERE row_kind = 'CONSULTANT' AND consultant = %s",
-                               (c["display_name"],)).fetchone()
-                if not r:
-                    continue
-                card = {k: _num(r[k]) for k in _CARD}
-            else:
-                r = cx.execute("""
-                    SELECT max(leads_target)       FILTER (WHERE is_primary_channel) AS leads_target,
-                           sum(total_leads)                                          AS total_leads,
-                           max(td_target)          FILTER (WHERE is_primary_channel) AS td_target,
-                           sum(td_achieved)                                          AS td_achieved,
-                           max(booking_target)     FILTER (WHERE is_primary_channel) AS booking_target,
-                           max(retail_target)      FILTER (WHERE is_primary_channel) AS retail_target,
-                           sum(retail_achieved)                                      AS retail_achieved,
-                           max(finance_target)     FILTER (WHERE is_primary_channel) AS finance_target,
-                           max(finance_achieved)   FILTER (WHERE is_primary_channel) AS finance_achieved,
-                           max(insurance_target)   FILTER (WHERE is_primary_channel) AS insurance_target,
-                           max(insurance_achieved) FILTER (WHERE is_primary_channel) AS insurance_achieved,
-                           count(*) AS n
-                      FROM target_consultant_scorecard
-                     WHERE consultant_id = %s AND period_id = %s AND row_kind = 'CONSULTANT'""",
-                    (c["consultant_id"], m["period_id"])).fetchone()
-                if not r["n"]:
-                    continue
-                card = {k: _num(r[k]) for k in _CARD if k != "booking_achieved"}
-                # Bookings and enquiries as the People page counts them for its month.
-                card["booking_achieved"] = cx.execute(
-                    "SELECT count(*) AS n FROM booking WHERE consultant_id = %s AND period_id = %s",
-                    (c["consultant_id"], m["period_id"])).fetchone()["n"]
-                card["total_leads"] = (card["total_leads"] or 0) + cx.execute(
-                    "SELECT count(*) AS n FROM lead WHERE consultant_id = %s AND period_id = %s AND origin = 'MANUAL'",
-                    (c["consultant_id"], m["period_id"])).fetchone()["n"]
-            card["retail_achieved"] = cx.execute(
-                f"SELECT count(*) AS n FROM registration rg WHERE rg.consultant_id = %(c)s AND {_RETAILED_IN_MONTH}",
-                {"c": c["consultant_id"], "p": m["period_id"], "lo": m["from"], "hi": m["to"]}).fetchone()["n"]
-            card["consultant"] = c["display_name"]
-            cards.append(card)
+        cards = [c for c in (_card(cx, p["consultant_id"], p["display_name"], m) for p in people[:3]) if c]
     if not cards:
         return {**_note(m), "answer": f"No scorecard row for {name} in {when(m)}."}
 
-    def of(done, target, what):
-        return f"{done or 0} {what}" + (f" (target {target})" if target is not None else "")
-
     first = cards[0]
     answer = (f"{first['consultant']}, {when(m)}: " + ", ".join((
-        of(first["td_achieved"], first["td_target"], "test drives"),
-        of(first["booking_achieved"], first["booking_target"], "bookings"),
-        of(first["retail_achieved"], first["retail_target"], "retails"),
-        of(first["total_leads"], first["leads_target"], "enquiries"))) + ".")
+        _against(first["td_achieved"] or 0, first["td_target"], "test drives"),
+        _against(first["booking_achieved"] or 0, first["booking_target"], "bookings"),
+        _against(first["retail_achieved"] or 0, first["retail_target"], "retails"),
+        _against(first["total_leads"] or 0, first["leads_target"], "enquiries"))) + ".")
     return {**_note(m), "scorecards": cards, "answer": answer,
             "source": "The month's DSR scorecard - the dealership's record of each consultant's test drives."}
+
+
+def _scorecard_test_drives_by_consultant(m: dict) -> list[dict] | None:
+    """Consultants' test drives for a month from its DSR scorecard, most
+    first; None when the month has no scorecard."""
+    if not m.get("period_id"):
+        return None
+    with session() as cx:
+        people = cx.execute("""
+            SELECT DISTINCT c.consultant_id, c.display_name FROM dim_consultant c
+              JOIN target_consultant_scorecard t ON t.consultant_id = c.consultant_id
+             WHERE t.period_id = %s AND t.row_kind = 'CONSULTANT'""", (m["period_id"],)).fetchall()
+        if not people:
+            return None
+        cards = [c for c in (_card(cx, p["consultant_id"], p["display_name"], m) for p in people) if c]
+    return sorted(({"name": c["consultant"], "value": c["td_achieved"], "target": c["td_target"]}
+                   for c in cards if c["td_achieved"]), key=lambda r: (-r["value"], r["name"]))
+
+
+# ------------------------------------------------------------ a month's headline
+
+# The Test Drives section's first day. Before it the calendar holds only sample
+# drives, and a month's test drives are the ones its DSR scorecard records.
+CALENDAR_START = date(2026, 10, 6)
+
+
+def _dealership_test_drives(cx, m: dict) -> dict | None:
+    """A month's test drives as the dashboard's headline counts them
+    (v_sales_funnel): the month's scorecard total plus test drives entered by
+    hand. None when the month's workbook - and so its scorecard - is not loaded."""
+    g = _grand_total(cx, m["period_id"])
+    if not g["n"]:
+        return None
+    by_hand = cx.execute("""SELECT count(*) AS n FROM test_drive WHERE origin = 'MANUAL'
+                              AND (td_date IS NULL OR td_date BETWEEN %s AND %s)""",
+                         (m["from"], m["to"])).fetchone()["n"]
+    return {"test_drives": _num((g["test_drives"] or 0) + by_hand), "target": _num(g["test_drive_target"])}
+
+
+def scorecard_test_drives(day: date, name: str | None = None) -> dict | None:
+    """The test drives the DSR scorecard records for the month holding `day` -
+    the dealership's, or one consultant's - with a sentence that says so. None
+    when that month has no scorecard, or no row for the consultant."""
+    m = resolve_month(day.strftime("%Y-%m"))
+    if m["period_id"] is None:
+        return None
+    with session() as cx:
+        if name and name.strip():
+            who = cx.execute("""SELECT consultant_id, display_name FROM dim_consultant
+                                 WHERE display_name ILIKE %s ORDER BY is_active DESC, display_name LIMIT 1""",
+                             (f"%{name.strip()}%",)).fetchone()
+            card = _card(cx, who["consultant_id"], who["display_name"], m) if who else None
+            if not card:
+                return None
+            done = card["td_achieved"] or 0
+            return {"month": m["month"], "consultant": card["consultant"], "test_drives": done,
+                    "target": card["td_target"],
+                    "answer": f"{card['consultant']}, {when(m)}: "
+                              f"{_against(done, card['td_target'], 'test drives')} by the DSR scorecard."}
+        tds = _dealership_test_drives(cx, m)
+    if not tds:
+        return None
+    return {"month": m["month"], **tds,
+            "answer": f"{when(m)}: {_against(tds['test_drives'], tds['target'], 'test drives')} "
+                      f"by the DSR scorecard."}
+
+
+def month_snapshot(month: str | None = None) -> dict:
+    """The dashboard's headline for any month - enquiries, test drives,
+    bookings and retails against the month's targets - counted as the
+    dashboard counts them for the month it is set to (v_sales_funnel,
+    v_daily_kpi), so for that month they are the dashboard's own figures.
+    Stock is as it stands now. With no month, the month the dashboard is set to.
+
+    Asked how many test drives the dealership did in September, the agent had
+    only the Test Drives calendar, which began on 6 Oct 2026, and answered 0;
+    the September scorecard says 76. Asked for September's retails it gave the
+    bookings since retailed (12); the month's retails are 17."""
+    m = resolve_month(month or "active")
+    if m["period_id"] is None:
+        return {**m, "note": f"Nothing has been filed under {m['month']} yet.",
+                "answer": f"Nothing recorded for {when(m)} yet."}
+    with session() as cx:
+        f = dict(cx.execute("""
+            SELECT (SELECT count(*) FROM lead WHERE period_id = %(p)s)                          AS enquiries,
+                   (SELECT count(*) FROM lead
+                     WHERE period_id = %(p)s AND qualified_stage = 'Qualified')                 AS qualified,
+                   (SELECT count(*) FROM booking WHERE period_id = %(p)s)                       AS bookings,
+                   (SELECT count(*) FROM booking
+                     WHERE period_id = %(p)s AND fulfilment_status = 'NO_STOCK')                AS backorders,
+                   (SELECT count(*) FROM booking
+                     WHERE period_id = %(p)s AND crm_entry_done IS FALSE)                       AS bookings_missing_crm_entry,
+                   (SELECT sum(booking_amount) FROM booking WHERE period_id = %(p)s)            AS booking_amount_collected,
+                   (SELECT count(*) FROM vehicle WHERE stock_status = 'FREESTOCK')              AS free_stock,
+                   (SELECT count(*) FROM vehicle WHERE stock_status = 'ALLOTED')                AS allotted_stock,
+                   (SELECT count(*) FROM vehicle
+                     WHERE stock_status IN ('FREESTOCK', 'ALLOTED') AND stock_aging_days > 90)  AS stock_over_90_days
+            """, {"p": m["period_id"]}).fetchone())
+        f["retails"] = _month_retails(cx, m)
+        g = _grand_total(cx, m["period_id"])
+        tds = _dealership_test_drives(cx, m)
+    if f["booking_amount_collected"] is not None:
+        f["booking_amount_collected"] = float(f["booking_amount_collected"])
+    f["test_drives"] = tds["test_drives"] if tds else None
+    f.update({k: _num(g[k]) for k in ("enquiry_target", "test_drive_target", "booking_target", "retail_target")})
+    f["enquiry_to_booking_pct"] = round(100 * f["bookings"] / f["enquiries"], 1) if f["enquiries"] else None
+    f["booking_to_retail_pct"] = round(100 * f["retails"] / f["bookings"], 1) if f["bookings"] else None
+
+    answer = f"{when(m)}: " + ", ".join(
+        [_against(f["enquiries"], f["enquiry_target"], "enquiries")]
+        + ([_against(f["test_drives"], f["test_drive_target"], "test drives")] if tds else [])
+        + [_against(f["bookings"], f["booking_target"], "bookings"),
+           _against(f["retails"], f["retail_target"], "retails")]) + "."
+    out = {**_note(m), "figures": f,
+           "test_drives_source": ("The month's DSR scorecard total, as the dashboard's headline counts it - the "
+                                  "dealership's record of test drives. The Test Drives calendar began on 6 Oct 2026."),
+           "retails_note": "Retails are cars registered in the month, as the scorecard counts them - not bookings "
+                           "marked RETAILED.",
+           "stock_note": "free_stock, allotted_stock and stock_over_90_days are as the stock stands now; "
+                         "stock_over_90_days counts free and allotted cars.",
+           "backorders_note": "backorders: the month's bookings still waiting for a car. Every open order waiting "
+                              "for a car, from any month, is in get_action_list."}
+    if not tds:
+        out["test_drives_source"] = f"No scorecard for {when(m)} yet, so no scorecard test drives or targets."
+        answer += f" No scorecard for {when(m)} yet, so no test-drive figure or targets from it"
+        if date.fromisoformat(m["to"]) >= CALENDAR_START:
+            from .test_drives import agent_test_drives
+            r = agent_test_drives(month=m["month"], include_samples=False, limit=1)["real"]
+            answer += (f"; on the Test Drives calendar: {r['attended']} attended, "
+                       f"{r['booked_upcoming']} booked ahead, {r['no_show']} no-show")
+        answer += "."
+    out["answer"] = answer
+    return out

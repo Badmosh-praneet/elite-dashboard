@@ -752,6 +752,27 @@ def agent_test_drives(date_: str | None = None, date_from: str | None = None, da
         f"{r['missed_enquiries']} missed enquir{ies(r['missed_enquiries'])}."
         + (f" The calendar also shows {out['samples']['total']} sample drives, made up for demonstrations."
            if include_samples and out["samples"]["total"] else ""))
+    # A whole month: the test drives its DSR scorecard records - the
+    # dealership's, or the executive's. Asked how many test drives the
+    # dealership did in September, the agent answered 0 real from here; the
+    # calendar began on 6 Oct 2026, and the September scorecard says 76.
+    if lo.day == 1 and hi == month_end:
+        from .agent_insights import CALENDAR_START, scorecard_test_drives
+        rec = scorecard_test_drives(lo, executive)
+        if rec:
+            out["scorecard"] = rec
+            if hi < CALENDAR_START and not (r["bookings"] or r["cancelled"]):
+                also = [f"{r['enquiries_waiting']} test-drive enquir{ies(r['enquiries_waiting'])} from then "
+                        f"still waiting for a time" if r["enquiries_waiting"] else "",
+                        f"{r['missed_enquiries']} missed" if r["missed_enquiries"] else ""]
+                also = " and ".join(a for a in also if a)
+                out["answer"] = (
+                    f"{rec['answer']} The Test Drives calendar began on 6 Oct 2026, so it has no real drives "
+                    f"for {period}" + (f"; {also}" if also else "") + "."
+                    + (f" It also shows {out['samples']['total']} sample drives, made up for demonstrations."
+                       if include_samples and out["samples"]["total"] else ""))
+            else:
+                out["answer"] += " " + rec["answer"]
     return out
 
 

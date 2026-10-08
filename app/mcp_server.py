@@ -73,23 +73,9 @@ class JsonRpcRequest(BaseModel):
 # these just adapt call shape.
 # ---------------------------------------------------------------------------
 
-def _dashboard_month_note(result: Any) -> Any:
-    """The snapshot and the scorecard count the month the dashboard is set to,
-    which anyone can change from its month selector. Say which month that is,
-    and when it is not the calendar month, say so."""
-    from .agent_insights import resolve_month
-    m = resolve_month("active")
-    about = {"month": m["month"], "calendar_month": m["calendar_month"]}
-    if m["month"] != m["calendar_month"]:
-        about["note"] = (f"These figures are for {m['month']}, the month the dashboard is set to - "
-                         f"not the calendar month ({m['calendar_month']}). For another month use "
-                         f"get_bookings_summary, get_leads_summary or get_consultant_leaderboard with month.")
-    return {**about, "figures": result}
-
-
 def _tool_get_dealership_snapshot(args: dict) -> Any:
-    from .main import agent_snapshot
-    return _dashboard_month_note(agent_snapshot())
+    from .agent_insights import month_snapshot
+    return month_snapshot(args.get("month"))
 
 
 def _tool_get_consultant_scorecard(args: dict) -> Any:
@@ -348,12 +334,12 @@ def _tool_get_test_drive_enquiries(args: dict) -> Any:
 TOOLS: list[dict] = [
     {
         "name": "get_top",
-        "description": "RANKINGS - use for every 'top', 'best', 'most', 'biggest', 'highest', 'oldest' or 'rank' question. Returns the ranked rows and a ready 'answer' sentence to repeat. what: consultants (by bookings or enquiries), models (by bookings, enquiries, free_stock or backorders), sources (by enquiries or qualified), bookings (single bookings by amount - 'top 5 bookings'), stock (oldest free stock by age), test_drive_cars or test_drive_executives (by test drive bookings). A month (default: this calendar month) or days; stock is as it stands now.",
+        "description": "RANKINGS - use for every 'top', 'best', 'most', 'biggest', 'highest', 'oldest' or 'rank' question. Returns the ranked rows and a ready 'answer' sentence to repeat. what: consultants (by bookings, enquiries, test_drives or retails - test drives from the month's DSR scorecard), models (by bookings, enquiries, free_stock or backorders), sources (by enquiries or qualified), bookings (single bookings by amount - 'top 5 bookings'), stock (oldest free stock by age), test_drive_cars or test_drive_executives (by test drive bookings). A month (default: this calendar month) or days; stock is as it stands now.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "what": {"type": "string", "description": "consultants, models, sources, bookings, stock, test_drive_cars or test_drive_executives"},
-                "by": {"type": "string", "description": "What to rank by; leave out for the usual one (bookings, enquiries, amount or age)"},
+                "by": {"type": "string", "description": "What to rank by: bookings, enquiries, test_drives, retails, qualified, free_stock, backorders; leave out for the usual one (bookings, enquiries, amount or age)"},
                 "top": {"type": "integer", "description": "How many, default 5"},
                 "month": {"type": "string", "description": "'current' (default), 'last', 'next', a month name or label like 'September' / 'SEP2026', or 'active' (the month the dashboard is set to)"},
                 "date": {"type": "string", "description": "Days instead of a month: 'today', 'yesterday', 'this week', 'last week', 'last 7 days', or YYYY-MM-DD"},
@@ -365,8 +351,10 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_dealership_snapshot",
-        "description": "Headline figures (enquiries, bookings, retails, targets, stock) for the month the dashboard is currently set to - which anyone can change, so it is not always the calendar month; the reply says which month. For this month, another month or a day, use get_bookings_summary, get_leads_summary, get_consultant_leaderboard or get_test_drives instead.",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": "The dealership's headline figures for a month - enquiries, test drives, bookings and retails against the month's targets, conversion - and stock as it stands now. Use it for 'how many test drives / retails / bookings did we do in <month>'. Test drives are the month's DSR scorecard total (the Test Drives calendar began on 6 Oct 2026); retails are cars registered in the month, not bookings marked retailed. Leave month out for the month the dashboard is set to; the reply says which month.",
+        "input_schema": {"type": "object", "properties": {
+            "month": {"type": "string", "description": "A month name or label like 'September' / 'SEP2026', 'current', 'last', or 'active' (the month the dashboard is set to, the default)"},
+        }},
     },
     {
         "name": "get_consultant_scorecard",
@@ -449,7 +437,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_bookings_summary",
-        "description": "Booking COUNTS for a month (default: this calendar month) or a span of days: the total, by model (as the dashboard's Inventory page counts them, e.g. TAIGUN includes Taigun FL), by consultant and by fulfilment status. Use this for any 'how many bookings' question - never count rows yourself.",
+        "description": "Booking COUNTS for a month (default: this calendar month) or a span of days: the total, by model (as the dashboard's Inventory page counts them, e.g. TAIGUN includes Taigun FL), by consultant and by fulfilment status - and for a month, its retails (cars registered), which are not the RETAILED status count. Use this for any 'how many bookings' question - never count rows yourself.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -462,7 +450,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_leads_summary",
-        "description": "Enquiry/lead COUNTS for a month (default: this calendar month) or a span of days: the total, how many qualified, by source channel (CRM, WALKIN, TELE, DIGITAL, REFERRAL...), by model and by consultant. Use this for any 'how many leads/enquiries' question - never count rows yourself.",
+        "description": "Enquiry/lead COUNTS for a month (default: this calendar month) or a span of days: the total, how many qualified, by source channel (CRM, WALKIN, TELE, DIGITAL, REFERRAL...), by model and by consultant (for a month, as the scorecard counts a consultant's enquiries). Use this for any 'how many leads/enquiries' question - never count rows yourself.",
         "input_schema": {
             "type": "object",
             "properties": {

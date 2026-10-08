@@ -23,7 +23,7 @@ import TestDriveBoard from './components/TestDriveBoard';
 import Visualizations from './components/Visualizations';
 import {
   BookingPace, Commitments, StockAgeing, Backorders,
-  ConsultantConversion, Attachments, DataQuality,
+  ConsultantConversion, Attachments,
 } from './components/Analytics';
 import FolderTat from './components/FolderTat';
 import { fetchDashboardData, activatePeriod, DASHBOARD_CALLS } from './api/client';
@@ -262,11 +262,6 @@ function Dashboard() {
             <KpiTiles kpi={data?.kpi || {}} trends={data?.trends || {}} />
             <div style={{ marginTop: 26 }}>
               <SalesFunnel funnel={data?.funnel || {}} />
-            </div>
-            {/* Where the workbook disagrees with itself belongs on the first
-                screen, not buried at the bottom of the longest tab. */}
-            <div style={{ marginTop: 26 }}>
-              <DataQuality issues={data?.dataQuality || []} />
             </div>
           </>
         )}

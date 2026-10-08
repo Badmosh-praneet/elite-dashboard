@@ -222,8 +222,15 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
             SELECT c.display_name AS consultant, t.name AS team,
                    (SELECT count(*) FROM booking b
                      WHERE b.consultant_id = c.consultant_id AND b.period_id = %(p)s) AS bookings,
-                   (SELECT count(*) FROM lead l
-                     WHERE l.consultant_id = c.consultant_id AND l.period_id = %(p)s) AS enquiries,
+                   -- Enquiries as the scorecard counts them: the workbook's figure for
+                   -- the month plus enquiries entered since. Leads loaded from the CRM
+                   -- export carry no consultant, so counting leads alone found almost none.
+                   coalesce((SELECT sum(sc.total_leads) FROM target_consultant_scorecard sc
+                              WHERE sc.consultant_id = c.consultant_id AND sc.period_id = %(p)s
+                                AND sc.row_kind = 'CONSULTANT'), 0)
+                   + (SELECT count(*) FROM lead l
+                       WHERE l.consultant_id = c.consultant_id AND l.period_id = %(p)s
+                         AND l.origin = 'MANUAL') AS enquiries,
                    (SELECT max(sc.booking_target) FROM target_consultant_scorecard sc
                      WHERE sc.consultant_id = c.consultant_id AND sc.period_id = %(p)s
                        AND sc.is_primary_channel) AS booking_target,
@@ -247,7 +254,7 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
         entry = {"consultant": r["consultant"], "team": r["team"], "bookings": r["bookings"],
                  "booking_target": target,
                  "pct_of_target": round(100 * r["bookings"] / target) if target else None,
-                 "enquiries": r["enquiries"], "_tie": r["retails_ever"]}
+                 "enquiries": int(r["enquiries"] or 0), "_tie": r["retails_ever"]}
         if retails:
             entry["retails"] = int(retails.get(r["consultant"]) or 0)
         board.append(entry)
@@ -379,12 +386,19 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
                          WHERE {where} AND b.booking_amount IS NOT NULL
                          ORDER BY b.booking_amount DESC, b.booking_date DESC LIMIT %s""",
                         [*params, n]).fetchall()]
-    elif w == "consultants" and b == "bookings" and not (date_from or date_to) and not _span_words(month):
+    elif w == "consultants" and not (date_from or date_to) and not _span_words(month):
+        # A month: the People page's own figures - bookings, and enquiries as
+        # the scorecard counts them.
         board = consultant_leaderboard(month, top=50)
         about = {k: v for k, v in board.items()
                  if k not in ("consultants", "answer", "total_bookings", "consultants_ranked")}
-        rows = [{"name": e["consultant"], "value": e["bookings"], "booking_target": e["booking_target"],
-                 "pct_of_target": e["pct_of_target"]} for e in board["consultants"] if e["bookings"]]
+        if b == "bookings":
+            rows = [{"name": e["consultant"], "value": e["bookings"], "booking_target": e["booking_target"],
+                     "pct_of_target": e["pct_of_target"]} for e in board["consultants"] if e["bookings"]]
+        else:
+            ranked = sorted((e for e in board["consultants"] if e["enquiries"]),
+                            key=lambda e: (-e["enquiries"], e["consultant"]))
+            rows = [{"name": e["consultant"], "value": int(e["enquiries"]), "bookings": e["bookings"]} for e in ranked]
     elif w == "sources" and b == "qualified":
         where, params, about = _scope(month, date_from, date_to, "l.created_at", "l")
         with session() as cx:
@@ -408,6 +422,10 @@ def top(what: str, by: str | None = None, month: str | None = None, date_from: s
         about = {k: v for k, v in summary.items()
                  if not k.startswith("by_") and k not in ("answer", "total", "qualified")}
         rows = [{"name": k, "value": v} for k, v in summary[field].items()]
+        if w == "consultants" and b == "enquiries":
+            about["note"] = ("For days, enquiries by consultant count only enquiries with a consultant "
+                             "recorded - leads from the CRM export carry none. For a month, the "
+                             "scorecard's figures are used.")
 
     rows = [r for r in rows if r["name"] not in ("Not recorded", "Not assigned")][:n]
     for i, r in enumerate(rows, 1):

@@ -625,22 +625,30 @@ def agent_test_drives(date_: str | None = None, date_from: str | None = None, da
     and a customer's name or phone. Counted for real drives and for samples
     apart, with the section's headline figures."""
     today = _now().date()
-    if month and not (date_ or date_from or date_to):
+    from .crm_api import span
+    named = span(date_) or span(month) if not (date_from or date_to) else None   # "this week", "next month"
+    if named:
+        lo, hi = named
+    elif month and not (date_ or date_from or date_to):
         from .agent_insights import resolve_month
         m = resolve_month(month)
         lo, hi = date.fromisoformat(m["from"]), date.fromisoformat(m["to"])
     else:
-        lo = _agent_day(date_from or date_, today)
-        hi = _agent_day(date_to or date_, lo)
+        lo = (span(date_from) or (None,))[0] or _agent_day(date_from or date_, today)
+        hi = (span(date_to) or (None, None))[1] or _agent_day(date_to or date_, lo)
     if hi < lo:
         lo, hi = hi, lo
-    if (hi - lo).days > 62:
-        raise HTTPException(400, "Ask for 62 days or fewer at a time.")
+    if (hi - lo).days > 370:
+        raise HTTPException(400, "Ask for a year or less at a time.")
     where, params = ["on_day BETWEEN %s AND %s"], [lo, hi]
-    if status and status.strip().lower() not in ("all", "any"):
-        s = _STATUS_WORDS.get(status.strip().lower().replace(" ", "_"))
+    st = (status or "").strip().lower().replace(" ", "_")
+    if st in ("bookings", "booking", "slot", "slots", "booked_drives"):
+        # Bookings: drives given a slot - booked, attended or no-show.
+        where.append("status IN ('booked', 'attended', 'no_show') AND start_time IS NOT NULL")
+    elif st and st not in ("all", "any"):
+        s = _STATUS_WORDS.get(st)
         if not s:
-            raise HTTPException(400, "status is one of booked, attended, no_show, cancelled or enquiry.")
+            raise HTTPException(400, "status is one of bookings, booked, attended, no_show, cancelled or enquiry.")
         where.append("status = %s")
         params.append(s)
     cars = {c["id"]: c["name"] for c in _cars()}
@@ -677,6 +685,18 @@ def agent_test_drives(date_: str | None = None, date_from: str | None = None, da
         out["samples_note"] = _SAMPLES_NOTE
     if len(rows) > len(shown):
         out["more"] = f"{len(rows) - len(shown)} more not listed: narrow the days or the filters."
+    month_end = (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    period = (f"{lo.day} {lo:%b %Y}" if lo == hi
+              else f"{lo:%B %Y}" if lo.day == 1 and hi == month_end
+              else f"{lo.day} {lo:%b} - {hi.day} {hi:%b %Y}")
+    r, ies = out["real"], (lambda k: "y" if k == 1 else "ies")
+    out["answer"] = (
+        f"{period}, real test drives: {r['bookings']} booking{'' if r['bookings'] == 1 else 's'} "
+        f"({r['booked_upcoming']} upcoming, {r['attended']} attended, {r['no_show']} no-show), "
+        f"{r['cancelled']} cancelled, {r['enquiries_waiting']} enquir{ies(r['enquiries_waiting'])} waiting, "
+        f"{r['missed_enquiries']} missed enquir{ies(r['missed_enquiries'])}."
+        + (f" The calendar also shows {out['samples']['total']} sample drives, made up for demonstrations."
+           if include_samples and out["samples"]["total"] else ""))
     return out
 
 

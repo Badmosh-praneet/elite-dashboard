@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -75,6 +76,9 @@ class FetchLeadsPayload(BaseModel):
     # today's, whichever month the dashboard is set to.
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    # Hot, Warm or Cold: the lead's rating, or for a lead with none (the
+    # AI agent's), the tag in its note - "[HOT] Test drive | ...".
+    rating: Optional[str] = None
 
 
 class FetchBookingsPayload(BaseModel):
@@ -102,14 +106,77 @@ def _day(value: Optional[str]) -> Optional[date]:
         return date.fromisoformat(v)
     except ValueError:
         raise HTTPException(status_code=400,
-                            detail=f"Not a day: {value!r}. Use today, yesterday, tomorrow or YYYY-MM-DD.")
+                            detail=f"Not a day: {value!r}. Use today, yesterday, tomorrow, YYYY-MM-DD, "
+                                   f"or a span such as this week, last 7 days or last month.")
+
+
+def span(value: Optional[str]) -> Optional[tuple[date, date]]:
+    """Days named in words - 'this week', 'last week', 'next week', 'last 7
+    days', 'next 30 days', 'this month', 'last month', 'next month' - as the
+    first and last day, in India; None when the words are not one of those.
+    A chat model asked about "this week" says "this week": working the dates
+    out itself is where it goes wrong. A week runs Monday to Sunday."""
+    if not value or not value.strip():
+        return None
+    v = re.sub(r"\s+", " ", value.strip().lower())
+    today = datetime.now(_IST).date()
+    monday = today - timedelta(days=today.weekday())
+    if v in ("this week", "current week"):
+        return monday, monday + timedelta(days=6)
+    if v in ("last week", "previous week"):
+        return monday - timedelta(days=7), monday - timedelta(days=1)
+    if v in ("next week", "coming week"):
+        return monday + timedelta(days=7), monday + timedelta(days=13)
+    m = re.fullmatch(r"(last|past|next|coming) (\d{1,3}) days?", v)
+    if m:
+        n = max(1, int(m.group(2)))
+        if m.group(1) in ("last", "past"):
+            return today - timedelta(days=n - 1), today
+        return today, today + timedelta(days=n - 1)
+    first = today.replace(day=1)
+    if v in ("this month", "current month"):
+        start = first
+    elif v in ("last month", "previous month"):
+        start = (first - timedelta(days=1)).replace(day=1)
+    elif v in ("next month", "coming month"):
+        start = (first + timedelta(days=32)).replace(day=1)
+    else:
+        return None
+    return start, (start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+
+# A booking's fulfilment status in the words people use. The column is an
+# enum spelled BOOKED / NO_STOCK / ALLOTED / RETAILED / CANCELLED, and
+# 'booked' used to reach it as is - a database error, not an answer.
+_BOOKING_STATUSES = {
+    "booked": "BOOKED", "open": "BOOKED",
+    "no stock": "NO_STOCK", "nostock": "NO_STOCK", "backorder": "NO_STOCK", "backorders": "NO_STOCK",
+    "back order": "NO_STOCK", "back orders": "NO_STOCK",
+    "alloted": "ALLOTED", "allotted": "ALLOTED", "allotment": "ALLOTED",
+    "retailed": "RETAILED", "retail": "RETAILED", "retails": "RETAILED", "delivered": "RETAILED",
+    "cancelled": "CANCELLED", "canceled": "CANCELLED", "cancel": "CANCELLED", "cancellation": "CANCELLED",
+}
+
+
+def booking_status(value: Optional[str]) -> Optional[str]:
+    """The enum value for a status as written, or None for no filter."""
+    if not value or not value.strip() or value.strip().lower() in ("all", "any"):
+        return None
+    v = re.sub(r"[\s_-]+", " ", value.strip().lower())
+    if v in _BOOKING_STATUSES:
+        return _BOOKING_STATUSES[v]
+    raise HTTPException(status_code=400, detail=(
+        f"Not a booking status: {value!r}. Use booked, no_stock (backorder), allotted, retailed or cancelled."))
 
 
 def _date_clause(column: str, date_from: Optional[str],
                  date_to: Optional[str]) -> Optional[tuple[str, list]]:
     """A day or a span of days on `column`, or None when neither end is given.
-    One end alone is that single day."""
-    lo, hi = _day(date_from), _day(date_to)
+    One end alone is that single day; a span in words ('this week') is its
+    days."""
+    a, b = span(date_from), span(date_to)
+    lo = a[0] if a else _day(date_from)
+    hi = b[1] if b else (a[1] if a and (not date_to or date_to == date_from) else _day(date_to))
     if lo is None and hi is None:
         return None
     lo, hi = lo or hi, hi or lo
@@ -194,6 +261,11 @@ def fetch_leads_for_agent(payload: FetchLeadsPayload):
             sql += " AND lower(COALESCE(l.lead_status, 'New')) = lower(%s)"
             params.append(payload.status.strip())
 
+        if payload.rating and payload.rating.strip():
+            # "HOT]" also finds the agent's "[SALES-HOT]".
+            sql += " AND (lower(l.rating) = lower(%s) OR (l.rating IS NULL AND l.enquiry_note ILIKE %s))"
+            params += [payload.rating.strip(), f"%{payload.rating.strip().upper()}]%"]
+
         if dated:
             sql += dated[0]
             params += dated[1]
@@ -230,6 +302,7 @@ def fetch_bookings_for_agent(payload: FetchBookingsPayload):
     if not is_db_ready():
         raise HTTPException(status_code=503, detail="Database not ready")
     dated = _date_clause("b.booking_date::date", payload.date_from, payload.date_to)
+    status = booking_status(payload.status)
 
     try:
         sql = """
@@ -253,9 +326,9 @@ def fetch_bookings_for_agent(payload: FetchBookingsPayload):
             sql += clause
             params += extra
 
-        if payload.status:
-            sql += " AND b.fulfilment_status = %s"
-            params.append(payload.status)
+        if status:
+            sql += " AND b.fulfilment_status::text = %s"
+            params.append(status)
 
         if payload.search:
             sql += " AND (b.customer_name ILIKE %s OR b.mobile ILIKE %s)"

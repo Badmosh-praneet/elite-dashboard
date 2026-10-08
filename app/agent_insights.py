@@ -19,6 +19,7 @@ rows gets it wrong.
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -61,6 +62,8 @@ def resolve_month(text: str | None) -> dict:
         day = today
     elif t in ("last", "last month", "previous", "previous month"):
         day = today.replace(day=1) - timedelta(days=1)
+    elif t in ("next", "next month", "coming month"):
+        day = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
     else:
         day = _parse_month(t, today)
         if day is None:
@@ -105,14 +108,13 @@ def _scope(month: str | None, date_from: str | None, date_to: str | None, date_c
            alias: str) -> tuple[str, list, dict]:
     """The WHERE for a month (by the month a row is filed under) or for a span
     of days (on `date_col`). Days, when given, win."""
-    from .crm_api import _day          # one reading of 'today' and YYYY-MM-DD for every tool
-    lo, hi = _day(date_from), _day(date_to)
-    if lo or hi:
-        lo, hi = lo or hi, hi or lo
-        if hi < lo:
-            lo, hi = hi, lo
-        today = _today()
-        about = {"from": lo.isoformat(), "to": hi.isoformat(), "calendar_month": _label(today)}
+    from .crm_api import _date_clause, span     # one reading of days and spans for every tool
+    if not (date_from or date_to) and span(month):   # "this week" passed as a month
+        date_from = date_to = month
+    dated = _date_clause(f"{date_col}::date", date_from, date_to)
+    if dated:
+        lo, hi = dated[1]
+        about = {"from": lo.isoformat(), "to": hi.isoformat(), "calendar_month": _label(_today())}
         return f"{date_col}::date BETWEEN %s AND %s", [lo, hi], about
     m = resolve_month(month)
     if m["period_id"] is None:
@@ -127,6 +129,25 @@ def _note(about: dict) -> dict:
         about = {**about, "note": f"These figures are for {month}. The dashboard is currently set to "
                                   f"{shown}, so its screens show {shown}."}
     return about
+
+
+def when(about: dict) -> str:
+    """The period of a figure in words: "September 2026", "8 Oct 2026",
+    "5 Oct - 11 Oct 2026"."""
+    if about.get("month") and "period_id" in about:
+        try:
+            return datetime.strptime(about["month"], "%b%Y").strftime("%B %Y")
+        except ValueError:
+            return about["month"]
+    lo, hi = date.fromisoformat(about["from"]), date.fromisoformat(about["to"])
+    if lo == hi:
+        return f"{lo.day} {lo:%b %Y}"
+    return f"{lo.day} {lo:%b} - {hi.day} {hi:%b %Y}"
+
+
+def _listing(counts: dict[str, int], n: int = 8) -> str:
+    items = [f"{k} {v}" for k, v in counts.items() if k not in ("Not recorded", "Not assigned")][:n]
+    return ", ".join(items)
 
 
 def _tally(rows: list[dict], key: str) -> dict[str, int]:
@@ -152,9 +173,12 @@ def bookings_summary(month: str | None = None, date_from: str | None = None,
               LEFT JOIN dim_model m      ON m.model_id      = b.model_id
               LEFT JOIN dim_consultant c ON c.consultant_id = b.consultant_id
              WHERE {where}""", params).fetchall()
-    return {**_note(about), "total": len(rows),
-            "by_model": _tally(rows, "family"), "by_model_as_recorded": _tally(rows, "model"),
-            "by_consultant": _tally(rows, "consultant"), "by_status": _tally(rows, "status")}
+    out = {**_note(about), "total": len(rows),
+           "by_model": _tally(rows, "family"), "by_model_as_recorded": _tally(rows, "model"),
+           "by_consultant": _tally(rows, "consultant"), "by_status": _tally(rows, "status")}
+    out["answer"] = (f"{when(about)}: {len(rows)} booking{'s' if len(rows) != 1 else ''}"
+                     + (f" - by model: {_listing(out['by_model'])}." if rows else "."))
+    return out
 
 
 def leads_summary(month: str | None = None, date_from: str | None = None,
@@ -174,9 +198,13 @@ def leads_summary(month: str | None = None, date_from: str | None = None,
               LEFT JOIN dim_model m       ON m.model_id      = l.model_id
               LEFT JOIN dim_consultant c  ON c.consultant_id = l.consultant_id
              WHERE {where}""", params).fetchall()
-    return {**_note(about), "total": len(rows), "qualified": sum(1 for r in rows if r["qualified"]),
-            "by_source": _tally(rows, "source"), "by_model": _tally(rows, "model"),
-            "by_consultant": _tally(rows, "consultant")}
+    out = {**_note(about), "total": len(rows), "qualified": sum(1 for r in rows if r["qualified"]),
+           "by_source": _tally(rows, "source"), "by_model": _tally(rows, "model"),
+           "by_consultant": _tally(rows, "consultant")}
+    out["answer"] = (f"{when(about)}: {len(rows)} enquir{'ies' if len(rows) != 1 else 'y'}, "
+                     f"{out['qualified']} qualified"
+                     + (f" - by source: {_listing(out['by_source'])}." if rows else "."))
+    return out
 
 
 def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
@@ -187,7 +215,8 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
     m = resolve_month(month)
     about = _note(m)
     if m["period_id"] is None:
-        return {**about, "consultants": [], "note": f"Nothing has been filed under {m['month']} yet."}
+        return {**about, "consultants": [], "note": f"Nothing has been filed under {m['month']} yet.",
+                "answer": f"No bookings recorded for {when(m)}."}
     with session() as cx:
         rows = cx.execute("""
             SELECT c.display_name AS consultant, t.name AS team,
@@ -230,5 +259,177 @@ def consultant_leaderboard(month: str | None = None, top: int = 10) -> dict:
         e["rank"] = i
         del e["_tie"]
     top = max(1, min(int(top or 10), 50))
+    shown = board[:top]
+    answer = (f"Top {len(shown)} consultant{'s' if len(shown) != 1 else ''} by bookings, {when(m)}: "
+              + "; ".join(f"{e['rank']}. {e['consultant']} - {e['bookings']}" for e in shown) + "."
+              if shown and shown[0]["bookings"] else f"No bookings recorded for {when(m)}.")
     return {**about, "total_bookings": sum(e["bookings"] for e in board),
-            "consultants_ranked": len(board), "consultants": board[:top]}
+            "consultants_ranked": len(board), "consultants": shown, "answer": answer}
+
+
+# ------------------------------------------------------------ rankings
+#
+# "Top 5 bookings", "top 10 consultants", "which model sells most": a chat
+# model given lists answers these by taking the first rows - the newest - and
+# calling them the top. Every ranking is made here, ranked and counted, with
+# the sentence that answers it.
+
+_TOP = {
+    "consultants": ("bookings", "enquiries"),
+    "models": ("bookings", "enquiries", "free_stock", "backorders"),
+    "sources": ("enquiries", "qualified"),
+    "bookings": ("amount",),
+    "stock": ("age",),
+    "test_drive_cars": ("test_drives",),
+    "test_drive_executives": ("test_drives",),
+}
+_WHAT = {
+    "consultant": "consultants", "executive": "consultants", "executives": "consultants",
+    "sales executives": "consultants", "salespeople": "consultants", "team": "consultants", "people": "consultants",
+    "model": "models", "car": "models", "cars": "models", "vehicles": "models",
+    "source": "sources", "lead sources": "sources", "channel": "sources", "channels": "sources",
+    "booking": "bookings", "order": "bookings", "orders": "bookings", "deals": "bookings",
+    "inventory": "stock", "oldest stock": "stock", "ageing": "stock", "aging": "stock", "ageing stock": "stock",
+    "test drive cars": "test_drive_cars", "test drives by car": "test_drive_cars",
+    "test drive executives": "test_drive_executives", "test drives by executive": "test_drive_executives",
+}
+_BY = {
+    "booking": "bookings", "sales": "bookings", "enquiry": "enquiries", "leads": "enquiries", "lead": "enquiries",
+    "stock": "free_stock", "free stock": "free_stock", "backorder": "backorders", "no stock": "backorders",
+    "value": "amount", "booking amount": "amount", "ageing": "age", "aging": "age", "days": "age",
+    "test drives": "test_drives", "test drive": "test_drives", "drives": "test_drives",
+}
+_UNITS = {"bookings": "bookings", "enquiries": "enquiries", "qualified": "qualified enquiries",
+          "free_stock": "cars in free stock", "backorders": "backorders", "test_drives": "test drive bookings"}
+
+
+def _span_words(text: str | None) -> bool:
+    from .crm_api import span
+    return bool(span(text))
+
+
+def top(what: str, by: str | None = None, month: str | None = None, date_from: str | None = None,
+        date_to: str | None = None, n: int = 5) -> dict:
+    """The top n of something, ranked: consultants (by bookings or enquiries),
+    models (by bookings, enquiries, free stock or backorders), lead sources (by
+    enquiries or qualified), single bookings (by amount), free stock (by age),
+    and test drives by car or by executive. A month (default: this calendar
+    month) or a span of days; stock is as it stands now."""
+    w = re.sub(r"[\s_-]+", " ", (what or "").strip().lower())
+    w = _WHAT.get(w, w.replace(" ", "_"))
+    if w not in _TOP:
+        raise HTTPException(400, "what is one of: consultants, models, sources, bookings, stock, "
+                                 "test_drive_cars, test_drive_executives.")
+    b = re.sub(r"[\s_-]+", " ", (by or _TOP[w][0]).strip().lower())
+    b = _BY.get(b, b.replace(" ", "_"))
+    if b not in _TOP[w]:
+        raise HTTPException(400, f"{w} can be ranked by: {', '.join(_TOP[w])}.")
+    n = max(1, min(int(n or 5), 50))
+
+    rows: list[dict] = []
+    about: dict = {}
+    if w == "stock" or (w == "models" and b == "free_stock"):
+        about = {"period": "now"}
+        with session() as cx:
+            if w == "stock":
+                rows = [{"name": f"{r['model']} {r['variant'] or ''}".strip(), "value": r["stock_aging_days"],
+                         "chassis": r["chassis_number"], "colour": r["colour"]}
+                        for r in cx.execute("""
+                            SELECT chassis_number, model, variant, colour, stock_aging_days FROM v_stock
+                             WHERE stock_status = 'FREESTOCK' AND stock_aging_days IS NOT NULL
+                             ORDER BY stock_aging_days DESC, chassis_number LIMIT %s""", (n,)).fetchall()]
+            else:
+                rows = [{"name": r["model"], "value": r["free_stock"]} for r in cx.execute(
+                    "SELECT model, free_stock FROM v_model_position WHERE free_stock > 0 "
+                    "ORDER BY free_stock DESC, model").fetchall()]
+    elif w in ("test_drive_cars", "test_drive_executives"):
+        from .crm_api import _date_clause, span
+        if not (date_from or date_to) and span(month):
+            date_from = date_to = month
+        if date_from or date_to:
+            lo, hi = _date_clause("x", date_from, date_to)[1]
+            about = {"from": lo.isoformat(), "to": hi.isoformat()}
+        else:
+            about = resolve_month(month)
+            lo, hi = date.fromisoformat(about["from"]), date.fromisoformat(about["to"])
+        key = "car_id" if w == "test_drive_cars" else "coalesce(consultant, 'Not assigned')"
+        with session() as cx:
+            got = cx.execute(f"""
+                SELECT {key} AS k, count(*) AS n FROM dsr.test_drive_booking
+                 WHERE td_date BETWEEN %s AND %s AND status IN ('booked', 'attended', 'no_show')
+                   AND start_time IS NOT NULL AND NOT sample
+                 GROUP BY 1 ORDER BY 2 DESC, 1""", (lo, hi)).fetchall()
+        from .test_drives import _cars
+        names = {c["id"]: c["name"] for c in _cars()}
+        rows = [{"name": names.get(r["k"], r["k"]) if w == "test_drive_cars" else r["k"], "value": r["n"]}
+                for r in got]
+        about["note"] = "Real test drives only; the sample drives are left out."
+    elif w == "bookings":
+        where, params, about = _scope(month, date_from, date_to, "b.booking_date", "b")
+        with session() as cx:
+            rows = [{"name": r["customer_name"] or "Customer not recorded", "value": float(r["booking_amount"]),
+                     "model": r["model"], "consultant": r["consultant"],
+                     "date": r["booking_date"].isoformat() if r["booking_date"] else None, "status": r["status"]}
+                    for r in cx.execute(f"""
+                        SELECT b.customer_name, m.name AS model, c.display_name AS consultant,
+                               b.booking_amount, b.booking_date, b.fulfilment_status::text AS status
+                          FROM booking b
+                          LEFT JOIN dim_model m      ON m.model_id      = b.model_id
+                          LEFT JOIN dim_consultant c ON c.consultant_id = b.consultant_id
+                         WHERE {where} AND b.booking_amount IS NOT NULL
+                         ORDER BY b.booking_amount DESC, b.booking_date DESC LIMIT %s""",
+                        [*params, n]).fetchall()]
+    elif w == "consultants" and b == "bookings" and not (date_from or date_to) and not _span_words(month):
+        board = consultant_leaderboard(month, top=50)
+        about = {k: v for k, v in board.items()
+                 if k not in ("consultants", "answer", "total_bookings", "consultants_ranked")}
+        rows = [{"name": e["consultant"], "value": e["bookings"], "booking_target": e["booking_target"],
+                 "pct_of_target": e["pct_of_target"]} for e in board["consultants"] if e["bookings"]]
+    elif w == "sources" and b == "qualified":
+        where, params, about = _scope(month, date_from, date_to, "l.created_at", "l")
+        with session() as cx:
+            rows = [{"name": r["s"], "value": r["n"]} for r in cx.execute(f"""
+                SELECT coalesce(s.channel::text, 'Not recorded') AS s, count(*) AS n
+                  FROM lead l LEFT JOIN dim_lead_source s ON s.source_id = l.source_id
+                 WHERE {where} AND l.qualified_stage = 'Qualified'
+                 GROUP BY 1 ORDER BY 2 DESC, 1""", params).fetchall()]
+    elif w == "models" and b == "backorders":
+        where, params, about = _scope(month, date_from, date_to, "b.booking_date", "b")
+        with session() as cx:
+            rows = [{"name": r["f"], "value": r["n"]} for r in cx.execute(f"""
+                SELECT coalesce(m.family, 'Not recorded') AS f, count(*) AS n
+                  FROM booking b LEFT JOIN dim_model m ON m.model_id = b.model_id
+                 WHERE {where} AND b.fulfilment_status::text = 'NO_STOCK'
+                 GROUP BY 1 ORDER BY 2 DESC, 1""", params).fetchall()]
+    else:
+        source = bookings_summary if b == "bookings" else leads_summary
+        summary = source(month, date_from, date_to)
+        field = {"consultants": "by_consultant", "models": "by_model", "sources": "by_source"}[w]
+        about = {k: v for k, v in summary.items()
+                 if not k.startswith("by_") and k not in ("answer", "total", "qualified")}
+        rows = [{"name": k, "value": v} for k, v in summary[field].items()]
+
+    rows = [r for r in rows if r["name"] not in ("Not recorded", "Not assigned")][:n]
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+    period = "as it stands now" if about.get("period") == "now" else when(about)
+    if w == "bookings":
+        title = "biggest bookings by amount"
+        fmt = lambda r: f"{r['name']} ({r['model']}) - Rs {r['value']:,.0f}"
+    elif w == "stock":
+        title = "oldest cars in free stock"
+        fmt = lambda r: f"{r['name']} - {r['value']} days"
+    else:
+        label = {"consultants": "consultants", "models": "models", "sources": "lead sources",
+                 "test_drive_cars": "cars", "test_drive_executives": "executives"}[w]
+        title = f"{label} by {_UNITS.get(b, b)}"
+        fmt = lambda r: f"{r['name']} - {r['value']}"
+    if rows:
+        answer = f"Top {len(rows)} {title}, {period}: " + "; ".join(f"{r['rank']}. {fmt(r)}" for r in rows) + "."
+        if len(rows) < n:
+            answer += f" Only {len(rows)} to rank."
+    else:
+        answer = f"Nothing to rank for {title}, {period}."
+    keep = ("note", "dashboard_month", "calendar_month", "month")
+    return {"ranking": title, "period": period, **{k: v for k, v in about.items() if k in keep},
+            "rows": rows, "answer": answer}

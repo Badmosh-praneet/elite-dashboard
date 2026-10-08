@@ -321,6 +321,7 @@ class Loader:
         """
         print("loading vehicles...")
         rows = []
+        not_chassis = 0
         for sheet, header, cols in (
             ("Stock & Allotted", 1, dict(chassis=3, comm=2, engine=4, model_code=5,
                                          long=6, variant=7, my=9, obd=10, options=11,
@@ -334,7 +335,13 @@ class Loader:
                                    status=17, nadcon=23)),
         ):
             for _, cell in self.rows(sheet, header, cols["chassis"]):
-                chassis = nz.upper(cell(cols["chassis"]))
+                chassis = nz.chassis(cell(cols["chassis"]))
+                if not chassis:
+                    # Not a chassis number - a name, say, in a sheet laid out
+                    # differently. Its other columns cannot be trusted either,
+                    # so the row is left out rather than made into a car.
+                    not_chassis += 1
+                    continue
                 model_label = cell(cols["model"])
                 vid = self.variant_id(model_label, cell(cols["variant"]),
                                       long_text=cell(cols["long"]),
@@ -358,7 +365,11 @@ class Loader:
                     nz.as_date(cell(cols["nadcon"])),
                 )
                 rows.append(row)
-        
+        if not_chassis:
+            self.warnings.append(
+                f"Stock: {not_chassis} row(s) skipped - the chassis column held something other "
+                f"than a chassis number (a name, or a shifted column)")
+
         if rows:
             self.fast_executemany("""
                 INSERT INTO vehicle (chassis_number, commission_no, engine_number,

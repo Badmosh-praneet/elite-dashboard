@@ -110,18 +110,51 @@ def _period_arg(args: dict) -> str:
     return resolve_month(want)["month"]
 
 
+def _days_args(args: dict) -> tuple[str | None, str | None]:
+    """date / date_from / date_to - and a span in words passed as the month
+    ("this week" as period), which is days, not a month."""
+    from .crm_api import span
+    for k in ("period", "month"):
+        if span(args.get(k)) and not (args.get("date") or args.get("date_from") or args.get("date_to")):
+            return args[k], args[k]
+    return (args.get("date_from") or args.get("date"), args.get("date_to") or args.get("date"))
+
+
+_CHASE = {"stock_past_retail_deadline": "cars in free stock past their retail deadline",
+          "ageing_over_90_days": "cars over 90 days in free stock",
+          "backorders": "backorders (booked, no car yet)",
+          "bookings_missing_crm_entry": "bookings missing a CRM entry"}
+
+
 def _tool_get_action_list(args: dict) -> Any:
+    """Totals, and the ten most pressing of each list - the whole of it ran to
+    22 KB, more than a small model reads well."""
     from .main import agent_action_list
-    return agent_action_list()
+    full = agent_action_list()
+    if not isinstance(full, dict):
+        return full
+    out = {k: {"total": len(v), "first_10": v[:10]} for k, v in full.items() if isinstance(v, list)}
+    out["answer"] = "To chase: " + "; ".join(
+        f"{len(full[k])} {label}" for k, label in _CHASE.items() if isinstance(full.get(k), list)) + "."
+    return out
 
 
 def _tool_get_vehicle_availability(args: dict) -> Any:
-    from .main import agent_availability
-    return agent_availability(
-        model=args.get("model"),
-        variant=args.get("variant"),
-        colour=args.get("colour"),
-    )
+    """Free stock matching a model, trim and colour. An empty list used to
+    come back bare, and a model had to guess what it meant; now it is said."""
+    from .main import agent_availability, agent_model_catalogue
+    rows = agent_availability(model=args.get("model"), variant=args.get("variant"), colour=args.get("colour"))
+    asked = " ".join(str(args.get(k)) for k in ("model", "variant", "colour") if args.get(k)) or "any car"
+    out = {"asked_for": asked, "found": len(rows), "cars": rows}
+    if not rows:
+        model = (args.get("model") or "").strip().lower()
+        families = sorted({(r.get("family") or r.get("model") or "").title() for r in agent_model_catalogue()} - {""})
+        sold = any(model and (model in f.lower() or f.lower() in model) for f in families)
+        out["answer"] = (f"{args.get('model')} is not a model this dealership sells. Models: {', '.join(families)}."
+                         if model and not sold else f"No {asked} in free stock right now.")
+    else:
+        out["answer"] = f"{len(rows)} match{'es' if len(rows) != 1 else ''} for {asked} in free stock."
+    return out
 
 
 def _tool_get_order_status(args: dict) -> Any:
@@ -130,7 +163,12 @@ def _tool_get_order_status(args: dict) -> Any:
     mobile = args.get("mobile")
     if not name and not mobile:
         raise HTTPException(status_code=400, detail="pass either name or mobile")
-    return agent_order_status(name=name, mobile=mobile)
+    rows = agent_order_status(name=name, mobile=mobile)
+    who = " / ".join(x for x in (name, mobile) if x)
+    return {"searched_for": who, "found": len(rows), "orders": rows,
+            "answer": (f"{len(rows)} booking{'s' if len(rows) != 1 else ''} found for {who}." if rows
+                       else f"No booking found for {who}. Check the spelling or the number, "
+                            f"or the customer may have enquired without booking.")}
 
 
 def _tool_get_model_catalogue(args: dict) -> Any:
@@ -139,13 +177,19 @@ def _tool_get_model_catalogue(args: dict) -> Any:
 
 
 def _tool_get_leads(args: dict) -> Any:
+    status = args.get("status", "New")
+    rating = args.get("rating")
+    if (status or "").strip().lower() in ("hot", "warm", "cold"):     # a rating, not a status
+        rating, status = status, "all"
+    date_from, date_to = _days_args(args)
     payload = FetchLeadsPayload(
         limit=args.get("limit", 50),
-        status=args.get("status", "New"),
-        period=_period_arg(args),
+        status=status,
+        period="all" if date_from or date_to else _period_arg(args),
         search=args.get("search"),
-        date_from=args.get("date_from") or args.get("date"),
-        date_to=args.get("date_to") or args.get("date"),
+        date_from=date_from,
+        date_to=date_to,
+        rating=rating,
     )
     return _one_line_per_enquiry(fetch_leads_for_agent(payload))
 
@@ -185,6 +229,7 @@ def _one_line_per_enquiry(rows: list[dict]) -> dict:
         by_key[key] = line
         lines.append(line)
     return {
+        "order": "newest first - a list, not a ranking. For 'top' or 'most' use get_top.",
         "customers": len(lines),
         "leads": len(rows),
         "note": ("One line per customer per day. 'leads' on a line is how many leads it holds - a caller "
@@ -195,15 +240,19 @@ def _one_line_per_enquiry(rows: list[dict]) -> dict:
 
 
 def _tool_get_bookings(args: dict) -> Any:
+    date_from, date_to = _days_args(args)
     payload = FetchBookingsPayload(
         limit=args.get("limit", 50),
-        period=_period_arg(args),
+        period="all" if date_from or date_to else _period_arg(args),
         search=args.get("search"),
         status=args.get("status"),
-        date_from=args.get("date_from") or args.get("date"),
-        date_to=args.get("date_to") or args.get("date"),
+        date_from=date_from,
+        date_to=date_to,
     )
-    return fetch_bookings_for_agent(payload)
+    rows = fetch_bookings_for_agent(payload)
+    return {"order": "newest booking first - a list, not a ranking. For 'top', 'biggest' or 'most' use get_top; "
+                     "for counts use get_bookings_summary.",
+            "count": len(rows), "bookings": rows}
 
 
 def _yes(value: Any, default: bool = True) -> bool:
@@ -230,16 +279,21 @@ def _tool_get_test_drives(args: dict) -> Any:
 
 def _tool_get_bookings_summary(args: dict) -> Any:
     from .agent_insights import bookings_summary
-    return bookings_summary(month=args.get("month"),
-                            date_from=args.get("date_from") or args.get("date"),
-                            date_to=args.get("date_to") or args.get("date"))
+    date_from, date_to = _days_args(args)
+    return bookings_summary(month=args.get("month"), date_from=date_from, date_to=date_to)
+
+
+def _tool_get_top(args: dict) -> Any:
+    from .agent_insights import top
+    date_from, date_to = _days_args(args)
+    return top(what=args.get("what") or "", by=args.get("by"), month=args.get("month"),
+               date_from=date_from, date_to=date_to, n=int(args.get("top") or args.get("n") or 5))
 
 
 def _tool_get_leads_summary(args: dict) -> Any:
     from .agent_insights import leads_summary
-    return leads_summary(month=args.get("month"),
-                         date_from=args.get("date_from") or args.get("date"),
-                         date_to=args.get("date_to") or args.get("date"))
+    date_from, date_to = _days_args(args)
+    return leads_summary(month=args.get("month"), date_from=date_from, date_to=date_to)
 
 
 def _tool_get_consultant_leaderboard(args: dict) -> Any:
@@ -257,6 +311,23 @@ def _tool_get_test_drive_enquiries(args: dict) -> Any:
 
 
 TOOLS: list[dict] = [
+    {
+        "name": "get_top",
+        "description": "RANKINGS - use for every 'top', 'best', 'most', 'biggest', 'highest', 'oldest' or 'rank' question. Returns the ranked rows and a ready 'answer' sentence to repeat. what: consultants (by bookings or enquiries), models (by bookings, enquiries, free_stock or backorders), sources (by enquiries or qualified), bookings (single bookings by amount - 'top 5 bookings'), stock (oldest free stock by age), test_drive_cars or test_drive_executives (by test drive bookings). A month (default: this calendar month) or days; stock is as it stands now.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "what": {"type": "string", "description": "consultants, models, sources, bookings, stock, test_drive_cars or test_drive_executives"},
+                "by": {"type": "string", "description": "What to rank by; leave out for the usual one (bookings, enquiries, amount or age)"},
+                "top": {"type": "integer", "description": "How many, default 5"},
+                "month": {"type": "string", "description": "'current' (default), 'last', 'next', a month name or label like 'September' / 'SEP2026', or 'active' (the month the dashboard is set to)"},
+                "date": {"type": "string", "description": "Days instead of a month: 'today', 'yesterday', 'this week', 'last week', 'last 7 days', or YYYY-MM-DD"},
+                "date_from": {"type": "string", "description": "First day of a span"},
+                "date_to": {"type": "string", "description": "Last day of a span"},
+            },
+            "required": ["what"],
+        },
+    },
     {
         "name": "get_dealership_snapshot",
         "description": "Headline figures (enquiries, bookings, retails, targets, stock) for the month the dashboard is currently set to - which anyone can change, so it is not always the calendar month; the reply says which month. For this month, another month or a day, use get_bookings_summary, get_leads_summary, get_consultant_leaderboard or get_test_drives instead.",
@@ -306,11 +377,11 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_leads",
-        "description": "Enquiries/leads, live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile. Leads from one customer on the same day come as one line, naming every car, with how many leads it holds and what each asked for - list lines, not leads. For counts use get_leads_summary.",
+        "description": "A LIST of enquiries/leads, newest first - not a ranking (for top/most use get_top; for counts get_leads_summary). status 'hot', 'warm' or 'cold' reads the lead rating. Live from the database. For a day or days (today, yesterday, a date) pass date or date_from/date_to: that reads those days whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by status or search name/mobile. Leads from one customer on the same day come as one line, naming every car, with how many leads it holds and what each asked for - list lines, not leads. For counts use get_leads_summary.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "date": {"type": "string", "description": "One day: 'today', 'yesterday' or YYYY-MM-DD (India time)"},
+                "date": {"type": "string", "description": "A day or a span in words: 'today', 'yesterday', 'this week', 'last week', 'last 7 days', 'this month', or YYYY-MM-DD (India time)"},
                 "date_from": {"type": "string", "description": "First day of a span, as for date"},
                 "date_to": {"type": "string", "description": "Last day of a span, as for date"},
                 "limit": {"type": "integer", "description": "Max rows, default 50"},
@@ -322,17 +393,17 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_bookings",
-        "description": "Orders/bookings, live from the database. For a day or days pass date or date_from/date_to (on the booking date), whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by fulfilment status or search customer name/mobile.",
+        "description": "A LIST of bookings, newest first - not a ranking (for top/biggest/most use get_top; for counts get_bookings_summary). Live from the database. For a day or days pass date or date_from/date_to (on the booking date), whatever reporting month the dashboard is set to. Otherwise reads the active (or a named) reporting month. Optionally filter by fulfilment status or search customer name/mobile.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "date": {"type": "string", "description": "One day: 'today', 'yesterday' or YYYY-MM-DD (India time)"},
+                "date": {"type": "string", "description": "A day or a span in words: 'today', 'yesterday', 'this week', 'last week', 'last 7 days', 'this month', or YYYY-MM-DD (India time)"},
                 "date_from": {"type": "string", "description": "First day of a span, as for date"},
                 "date_to": {"type": "string", "description": "Last day of a span, as for date"},
                 "limit": {"type": "integer", "description": "Max rows, default 50"},
                 "period": {"type": "string", "description": "Month: 'current' (this calendar month), 'last', a month name or label like 'September' / 'SEP2026', 'active' (the month the dashboard is set to; the default), or 'all'. Ignored when a date is given"},
                 "search": {"type": "string", "description": "Matches customer name or mobile"},
-                "status": {"type": "string", "description": "fulfilment_status: BOOKED / NO_STOCK / ALLOTED / RETAILED / CANCELLED"},
+                "status": {"type": "string", "description": "booked, no_stock (backorder), allotted, retailed or cancelled"},
             },
         },
     },
@@ -343,7 +414,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "month": {"type": "string", "description": "'current' (default, this calendar month), 'last', a month name or label like 'September' / 'SEP2026', or 'active' (the month the dashboard is set to)"},
-                "date": {"type": "string", "description": "One day instead of a month: 'today', 'yesterday' or YYYY-MM-DD"},
+                "date": {"type": "string", "description": "Days instead of a month: 'today', 'yesterday', 'this week', 'last week', 'last 7 days', or YYYY-MM-DD"},
                 "date_from": {"type": "string", "description": "First day of a span"},
                 "date_to": {"type": "string", "description": "Last day of a span"},
             },
@@ -356,7 +427,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "month": {"type": "string", "description": "'current' (default, this calendar month), 'last', a month name or label like 'September' / 'SEP2026', or 'active' (the month the dashboard is set to)"},
-                "date": {"type": "string", "description": "One day instead of a month: 'today', 'yesterday' or YYYY-MM-DD"},
+                "date": {"type": "string", "description": "Days instead of a month: 'today', 'yesterday', 'this week', 'last week', 'last 7 days', or YYYY-MM-DD"},
                 "date_from": {"type": "string", "description": "First day of a span"},
                 "date_to": {"type": "string", "description": "Last day of a span"},
             },
@@ -379,11 +450,11 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "date": {"type": "string", "description": "One day: 'today' (default), 'tomorrow', 'yesterday' or YYYY-MM-DD"},
+                "date": {"type": "string", "description": "A day or a span in words: 'today' (default), 'tomorrow', 'yesterday', 'this week', 'next week', 'next 7 days', or YYYY-MM-DD"},
                 "date_from": {"type": "string", "description": "First day of a span, as for date"},
                 "date_to": {"type": "string", "description": "Last day of a span, as for date"},
                 "month": {"type": "string", "description": "A whole month instead: 'current' (this calendar month), 'last', or a month name or label like 'October' / 'OCT2026'"},
-                "status": {"type": "string", "description": "booked, attended, no_show, cancelled or enquiry; omit for all"},
+                "status": {"type": "string", "description": "bookings (any drive given a slot), booked, attended, no_show, cancelled or enquiry; omit for all"},
                 "car": {"type": "string", "description": "Taigun, Virtus, Tayron, Tiguan R-Line or Golf GTI"},
                 "search": {"type": "string", "description": "Customer name, or 4+ digits of their phone"},
                 "include_samples": {"type": "boolean", "description": "Include the made-up sample drives (default true)"},
@@ -414,6 +485,7 @@ TOOL_HANDLERS: dict[str, Callable[[dict], Any]] = {
     "get_model_catalogue": _tool_get_model_catalogue,
     "get_leads": _tool_get_leads,
     "get_bookings": _tool_get_bookings,
+    "get_top": _tool_get_top,
     "get_bookings_summary": _tool_get_bookings_summary,
     "get_leads_summary": _tool_get_leads_summary,
     "get_consultant_leaderboard": _tool_get_consultant_leaderboard,

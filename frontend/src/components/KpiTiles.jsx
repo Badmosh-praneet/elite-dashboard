@@ -72,17 +72,13 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
   const allotted = num(kpi.allotted_stock);
   const onFloor = free + allotted;
   const bookings = num(kpi.bookings);
-  const bookingTarget = num(kpi.booking_target);
   const backorders = num(kpi.backorders);
   const pending = num(kpi.bookings_missing_crm_entry);
 
   const share = (part, whole) => (whole > 0 ? (part / whole) * 100 : 0);
-  // How many enquiries became bookings, against the rate the month's own
-  // targets assume - its booking target over its enquiry target (64 of 400 in
-  // September, 16%). It took the place of ageing stock, which the Inventory
-  // page and the chase list already carry.
+  // How many enquiries became bookings. It took the place of ageing stock,
+  // which the Inventory page and the chase list already carry.
   const conversion = share(bookings, enquiries);
-  const plan = bookingTarget > 0 && leadsTarget > 0 ? share(bookingTarget, leadsTarget) : null;
   // "0.0% of 0 target" for a month whose scorecard sets none.
   const ofTarget = (part, target, rest = 'target') =>
     target > 0 ? `${pct(share(part, target))} of ${n0(target)} ${rest}` : 'No target set this month';
@@ -128,9 +124,7 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
       value: conversion,
       format: pct,
       share: conversion,
-      color: plan == null || conversion >= plan ? 'var(--good)' : 'var(--warning)',
-      foot: `${n0(bookings)} bookings from ${n0(enquiries)} enquiries`
-        + (plan != null ? ` · plan ${pct(plan)}` : ''),
+      foot: `${n0(bookings)} bookings from ${n0(enquiries)} enquiries`,
     },
     {
       label: 'Backorders',

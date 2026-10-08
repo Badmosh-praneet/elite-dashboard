@@ -32,7 +32,7 @@ from .db import (is_db_ready, fetch_all, pool, DSN, ensure_pool_open,
                  connect as db_connect, session)
 from .events import broker
 from etl.dimensions import activate_period
-from etl.load_dsr import Loader
+from etl.load_dsr import Loader, workbook_problem
 from .write import (AllotmentIn, BookingIn, BookingPatch, LeadIn, RegistrationIn,
                     TestDriveIn, VehicleIn, create_allotment, create_booking,
                     create_lead, create_registration, create_test_drive,
@@ -555,6 +555,19 @@ def _job_get(job_id: str) -> dict | None:
         return dict(job) if job else None
 
 
+def _upload_problem(content: bytes) -> str | None:
+    """Why an uploaded file cannot be loaded as a DSR workbook, or None. Reads
+    the tab names only, so it answers in a moment."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+    except Exception as exc:
+        return f"Could not open the file as an Excel workbook ({exc}). Save it as .xlsx and try again."
+    try:
+        return workbook_problem(wb)
+    finally:
+        wb.close()
+
+
 def _ingest_worker(job_id: str, content: bytes, fname: str, period_label: str,
                    period_start: date, period_end: date, uploaded_by: str,
                    mode: str = "replace") -> None:
@@ -639,6 +652,10 @@ async def start_upload(
     content = await file.read()
     if not content:
         raise HTTPException(400, "Uploaded file is empty.")
+    # Before anything is queued - and so before a replace touches the month.
+    problem = _upload_problem(content)
+    if problem:
+        raise HTTPException(400, problem)
     if not is_db_ready():
         raise HTTPException(503, "The database is not reachable.")
 
@@ -793,6 +810,9 @@ async def upload_dsr_workbook(
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
     except Exception as exc:
         raise HTTPException(400, f"Could not parse Excel workbook: {exc}")
+    problem = workbook_problem(wb)
+    if problem:
+        raise HTTPException(400, problem)
 
     if is_db_ready():
         try:

@@ -164,18 +164,28 @@ def _against(n, target, what: str = "") -> str:
 
 
 def _grand_total(cx, period_id) -> dict:
-    """The dealership's line on a month's scorecard (its GRAND_TOTAL row), read
-    as the People page reads a consultant's: targets from the primary-channel
-    row, achievement summed. n is 0 when the month's workbook is not loaded."""
-    return cx.execute("""
-        SELECT max(leads_target)   FILTER (WHERE is_primary_channel) AS enquiry_target,
-               max(td_target)      FILTER (WHERE is_primary_channel) AS test_drive_target,
-               max(booking_target) FILTER (WHERE is_primary_channel) AS booking_target,
-               max(retail_target)  FILTER (WHERE is_primary_channel) AS retail_target,
-               sum(td_achieved)                                      AS test_drives,
-               count(*)                                              AS n
-          FROM target_consultant_scorecard
-         WHERE period_id = %s AND row_kind = 'GRAND_TOTAL'""", (period_id,)).fetchone()
+    """The dealership's line on a month's scorecard: its TOTAL row, read as the
+    People page reads a consultant's (targets from the primary-channel row,
+    achievement summed) - or, for a workbook with no TOTAL row, its team rows
+    added up, which is what the TOTAL row is. A test workbook holding one team
+    and no TOTAL row left September with no targets and no test drives. n is 0
+    when the month has neither."""
+    for kind in ("GRAND_TOTAL", "TEAM_TOTAL"):
+        g = cx.execute("""
+            SELECT sum(enquiry_target) AS enquiry_target, sum(test_drive_target) AS test_drive_target,
+                   sum(booking_target) AS booking_target, sum(retail_target)     AS retail_target,
+                   sum(test_drives)    AS test_drives,    count(*)               AS n
+              FROM (SELECT max(leads_target)   FILTER (WHERE is_primary_channel) AS enquiry_target,
+                           max(td_target)      FILTER (WHERE is_primary_channel) AS test_drive_target,
+                           max(booking_target) FILTER (WHERE is_primary_channel) AS booking_target,
+                           max(retail_target)  FILTER (WHERE is_primary_channel) AS retail_target,
+                           sum(td_achieved)                                      AS test_drives
+                      FROM target_consultant_scorecard
+                     WHERE period_id = %s AND row_kind = %s
+                     GROUP BY row_label) line""", (period_id, kind)).fetchone()
+        if g["n"]:
+            break
+    return g
 
 
 def _month_retails(cx, m: dict, consultant_id: int | None = None) -> int:

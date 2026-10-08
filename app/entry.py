@@ -386,12 +386,25 @@ def period_contents(label: str):
             (pid,)).fetchone()["n"] + cx.execute(
             "SELECT count(*) AS n FROM booking WHERE origin = 'MANUAL' AND period_id = %s",
             (pid,)).fetchone()["n"]
+        # What uploading a workbook in its place removes - less than deleting
+        # the month: a replace clears only what a workbook loaded into it, and
+        # keeps the rows typed into the dashboard (see Loader.reset). The
+        # upload panel showed the delete figures and said the hand-entered rows
+        # would be replaced too; they never were.
+        replaces = {}
+        for table in PERIOD_FACTS:
+            n = cx.execute(f"SELECT count(*) AS n FROM {table} "
+                           f"WHERE origin = 'WORKBOOK' AND load_period_id = %s", (pid,)).fetchone()["n"]
+            if n:
+                replaces[table] = n
         return {
             "label": row["label"],
             "is_active": row["is_active"],
             "counts": {k: v for k, v in counts.items() if v},
             "total": sum(counts.values()),
             "hand_entered": manual,
+            "replaces": replaces,
+            "replaces_total": sum(replaces.values()),
         }
 
 

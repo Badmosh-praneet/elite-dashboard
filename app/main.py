@@ -116,12 +116,28 @@ app.include_router(mcp_router)
 # connection, spent ~5.2 s wall-clock to move 50 KB. Postgres will build all of
 # it as JSON in a single statement, so the page now costs one round trip
 # instead of sixteen checkouts.
+# The dealership's targets for the month the dashboard is set to: its
+# scorecard's TOTAL row - or, for a workbook with no TOTAL row (one team's
+# scorecard, say), its team rows added up, which is what the TOTAL row is.
+# With neither there are none; the front end used to fill in August's (84
+# bookings, 66 retails, 450 enquiries, 300 test drives) and show them as any
+# month's.
+_TARGETS_SQL = """
+    SELECT leads_target, td_target, booking_target, retail_target
+      FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'
+    UNION ALL
+    SELECT sum(leads_target), sum(td_target), sum(booking_target), sum(retail_target)
+      FROM v_consultant_scorecard
+     WHERE row_kind = 'TEAM_TOTAL'
+       AND NOT EXISTS (SELECT 1 FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL')
+    HAVING count(*) > 0
+    LIMIT 1"""
+
 _DASHBOARD_BUNDLE = """
 SELECT
   (SELECT row_to_json(x) FROM v_daily_kpi x)                                        AS kpi,
   (SELECT row_to_json(x) FROM v_sales_funnel x)                                     AS funnel_raw,
-  (SELECT row_to_json(x) FROM (SELECT * FROM v_consultant_scorecard
-      WHERE row_kind = 'GRAND_TOTAL' LIMIT 1) x)                                    AS targets,
+  (SELECT row_to_json(x) FROM (__TARGETS__) x)                                     AS targets,
   (SELECT json_agg(x) FROM v_consultant_leaderboard x)                              AS board,
   (SELECT json_agg(x) FROM (SELECT * FROM v_leads_sourcewise ORDER BY leads DESC) x)        AS sources,
   (SELECT json_agg(x) FROM (SELECT * FROM v_model_position ORDER BY total_stock DESC, model) x) AS models,
@@ -185,7 +201,7 @@ SELECT
                           SELECT chassis_number, model, variant, colour, stock_aging_days
                           FROM v_stock WHERE stock_status = 'FREESTOCK'
                           ORDER BY stock_aging_days DESC NULLS LAST) x)))            AS options
-"""
+""".replace("__TARGETS__", _TARGETS_SQL)
 
 
 @app.get("/api/dashboard", tags=["dashboard"])
@@ -806,10 +822,7 @@ def funnel():
     if is_db_ready():
         try:
             stages = fetch_one("SELECT * FROM v_sales_funnel")
-            targets = fetch_one("""
-                SELECT leads_target, td_target, booking_target, retail_target
-                FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'
-            """) or {}
+            targets = fetch_one(_TARGETS_SQL) or {}
             if stages:
                 return {
                     "period": stages["period"],

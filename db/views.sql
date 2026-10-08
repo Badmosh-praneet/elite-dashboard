@@ -482,9 +482,14 @@ SELECT p.label AS period,
        (SELECT count(*) FROM lead
          WHERE is_current_period AND qualified_stage = 'Qualified')      AS qualified,
        -- This month's grand total. Summed over every month's, August read 204 -
-       -- its own 128 plus September's 76.
-       (SELECT COALESCE(sum(td_achieved), 0) FROM target_consultant_scorecard
-         WHERE row_kind = 'GRAND_TOTAL' AND period_id = p.period_id)
+       -- its own 128 plus September's 76. A workbook with no TOTAL row (one
+       -- team's scorecard) falls back to its team rows, which is what the TOTAL
+       -- row adds up; without that September read 0 against the team's 68.
+       COALESCE((SELECT sum(td_achieved) FROM target_consultant_scorecard
+                  WHERE row_kind = 'GRAND_TOTAL' AND period_id = p.period_id),
+                (SELECT sum(td_achieved) FROM target_consultant_scorecard
+                  WHERE row_kind = 'TEAM_TOTAL' AND period_id = p.period_id),
+                0)
        + (SELECT count(*) FROM test_drive
            WHERE origin = 'MANUAL'
              AND (td_date IS NULL
@@ -644,9 +649,13 @@ SELECT k.period,
        k.enquiry_to_booking_pct, k.booking_to_retail_pct,
        k.free_stock, k.allotted_stock, k.stock_over_90_days, k.backorders,
        k.bookings_missing_crm_entry, k.booking_amount_collected,
-       (SELECT booking_target   FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL') AS booking_target,
-       (SELECT retail_target    FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL') AS retail_target,
-       (SELECT leads_target     FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL') AS enquiry_target
+       -- The TOTAL row's targets, or for a workbook without one, its teams' added up.
+       COALESCE((SELECT booking_target FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'),
+                (SELECT sum(booking_target) FROM v_consultant_scorecard WHERE row_kind = 'TEAM_TOTAL')) AS booking_target,
+       COALESCE((SELECT retail_target FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'),
+                (SELECT sum(retail_target) FROM v_consultant_scorecard WHERE row_kind = 'TEAM_TOTAL')) AS retail_target,
+       COALESCE((SELECT leads_target FROM v_consultant_scorecard WHERE row_kind = 'GRAND_TOTAL'),
+                (SELECT sum(leads_target) FROM v_consultant_scorecard WHERE row_kind = 'TEAM_TOTAL')) AS enquiry_target
 FROM v_daily_kpi k;
 
 -- ---------------------------------------------------------------------

@@ -50,14 +50,16 @@ async function fetchBundled(onProgress) {
   if (!res.ok) throw new Error(`bundle unavailable (${res.status})`);
   const d = await res.json();
   if (onProgress) onProgress(DASHBOARD_CALLS);
+  // A month with no targets on its scorecard has none: these used to fall back
+  // to August's (84 / 66 / 450 / 300) and show them as any month's.
   const stage = name => (d.funnel?.stages || []).find(s => s.stage === name)?.target;
   return {
     kpi: {
       ...d.kpi,
-      booking_target: d.kpi?.booking_target ?? stage("Bookings") ?? 84,
-      retail_target: d.kpi?.retail_target ?? stage("Retails") ?? 66,
-      leads_target: d.kpi?.leads_target ?? stage("Enquiries") ?? 450,
-      td_target: d.kpi?.td_target ?? stage("Test drives") ?? 300,
+      booking_target: d.kpi?.booking_target ?? stage("Bookings") ?? null,
+      retail_target: d.kpi?.retail_target ?? stage("Retails") ?? null,
+      leads_target: d.kpi?.leads_target ?? stage("Enquiries") ?? null,
+      td_target: d.kpi?.td_target ?? stage("Test drives") ?? null,
     },
     trends: d.trends || {},
     funnel: d.funnel || {},
@@ -126,10 +128,10 @@ export async function fetchDashboardData(onProgress) {
 
     const enrichedKpi = {
       ...kpi,
-      booking_target: kpi.booking_target ?? targetsByStage["Bookings"] ?? 84,
-      retail_target: kpi.retail_target ?? targetsByStage["Retails"] ?? 66,
-      leads_target: kpi.leads_target ?? targetsByStage["Enquiries"] ?? 450,
-      td_target: kpi.td_target ?? targetsByStage["Test drives"] ?? 300,
+      booking_target: kpi.booking_target ?? targetsByStage["Bookings"] ?? null,
+      retail_target: kpi.retail_target ?? targetsByStage["Retails"] ?? null,
+      leads_target: kpi.leads_target ?? targetsByStage["Enquiries"] ?? null,
+      td_target: kpi.td_target ?? targetsByStage["Test drives"] ?? null,
     };
 
     return {

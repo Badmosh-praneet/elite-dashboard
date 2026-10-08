@@ -77,26 +77,31 @@ export default function KpiTiles({ kpi = {}, trends = {} }) {
   const pending = num(kpi.bookings_missing_crm_entry);
 
   const share = (part, whole) => (whole > 0 ? (part / whole) * 100 : 0);
+  // "0.0% of 0 target" for a month whose scorecard sets none.
+  const ofTarget = (part, target, rest = 'target') =>
+    target > 0 ? `${pct(share(part, target))} of ${n0(target)} ${rest}` : 'No target set this month';
 
   const tiles = [
     {
       label: 'Retails Delivered',
       value: retails,
       share: share(retails, retailTarget),
-      foot: `${pct(share(retails, retailTarget))} of ${n0(retailTarget)} target`,
+      foot: ofTarget(retails, retailTarget),
     },
     {
       label: 'Total Enquiries',
       value: enquiries,
       share: share(enquiries, leadsTarget),
       spark: trends.enquiries,
-      foot: `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)} · ${n0(kpi.qualified)} qualified`,
+      foot: leadsTarget > 0
+        ? `${pct(share(enquiries, leadsTarget))} of ${n0(leadsTarget)} · ${n0(kpi.qualified)} qualified`
+        : `No target set · ${n0(kpi.qualified)} qualified`,
     },
     {
       label: 'Test Drives',
       value: testDrives,
       share: share(testDrives, tdTarget),
-      foot: `${pct(share(testDrives, tdTarget))} of ${n0(tdTarget)} target`,
+      foot: ofTarget(testDrives, tdTarget),
     },
     {
       label: 'Booking Revenue',

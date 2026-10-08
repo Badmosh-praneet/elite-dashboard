@@ -388,19 +388,21 @@ export default function ExcelUploadModal({ isOpen, onClose, onUploadComplete }) 
                 </>
               ) : (
                 <>
-                  This <b>replaces</b> everything currently in <b>{replacing.label}</b>
-                  {replacing.total > 0
-                    ? <> &mdash; {n0(replacing.total)} rows
-                        {replacing.counts && Object.keys(replacing.counts).length > 0 && (
-                          <> ({Object.entries(replacing.counts)
+                  This <b>replaces</b> what workbooks loaded into <b>{replacing.label}</b>
+                  {(replacing.replaces_total ?? replacing.total) > 0
+                    ? <> &mdash; {n0(replacing.replaces_total ?? replacing.total)} rows
+                        {(replacing.replaces || replacing.counts)
+                          && Object.keys(replacing.replaces || replacing.counts).length > 0 && (
+                          <> ({Object.entries(replacing.replaces || replacing.counts)
                               .map(([k, v]) => `${n0(v)} ${k.replace(/_/g, ' ')}`)
                               .join(', ')})</>
                         )}. It is not added alongside.</>
-                    : <>, which is currently empty.</>}
+                    : <>, which holds nothing from a workbook yet.</>}
                   {replacing.hand_entered > 0 && (
-                    <div style={{ color: 'var(--critical)', marginTop: 6 }}>
-                      {n0(replacing.hand_entered)} of those were entered by hand on the dashboard
-                      and will also be replaced.
+                    <div style={{ marginTop: 6 }}>
+                      {n0(replacing.hand_entered)} {replacing.hand_entered === 1 ? 'row' : 'rows'} entered
+                      by hand on the dashboard {replacing.hand_entered === 1 ? 'is' : 'are'} kept: a
+                      replace only removes what a workbook loaded.
                     </div>
                   )}
                 </>
